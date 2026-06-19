@@ -2,9 +2,21 @@
 
 from __future__ import annotations
 
+import pyarrow as pa
 from sklearn import datasets as skd
 
-from vgi_sklearn.datasets import IrisFunction
+from vgi_sklearn.datasets import (
+    BreastCancerFunction,
+    DiabetesFunction,
+    DigitsFunction,
+    IrisFunction,
+    MakeBlobsFunction,
+    MakeCirclesFunction,
+    MakeClassificationFunction,
+    MakeMoonsFunction,
+    MakeRegressionFunction,
+    WineFunction,
+)
 from vgi_sklearn.schema_utils import dedupe_names, snake_case
 
 from .harness import invoke_table_function
@@ -50,3 +62,78 @@ class TestIris:
         table = invoke_table_function(IrisFunction).to_pydict()
         assert set(table["target_name"]) == {"setosa", "versicolor", "virginica"}
         assert set(table["target"]) == {0, 1, 2}
+
+
+class TestToyDatasets:
+    def test_wine(self) -> None:
+        table = invoke_table_function(WineFunction)
+        assert table.num_rows == 178
+        assert "target_name" in table.column_names
+
+    def test_digits(self) -> None:
+        table = invoke_table_function(DigitsFunction)
+        assert table.num_rows == 1797
+        # 64 pixel features + sample_id + target + target_name
+        assert table.num_columns == 67
+
+    def test_breast_cancer(self) -> None:
+        table = invoke_table_function(BreastCancerFunction)
+        assert table.num_rows == 569
+        assert set(table.column("target").to_pylist()) == {0, 1}
+
+    def test_diabetes_is_regression(self) -> None:
+        table = invoke_table_function(DiabetesFunction)
+        assert table.num_rows == 442
+        # Regression: float target, no target_name column
+        assert "target_name" not in table.column_names
+        assert table.schema.field("target").type == pa.float64()
+
+
+class TestGenerators:
+    def test_make_classification_shape(self) -> None:
+        table = invoke_table_function(
+            MakeClassificationFunction,
+            named={
+                "n_samples": pa.scalar(60),
+                "n_features": pa.scalar(5),
+                "n_informative": pa.scalar(3),
+                "n_classes": pa.scalar(3),
+            },
+        )
+        assert table.num_rows == 60
+        assert table.column_names == ["sample_id", "feature_0", "feature_1", "feature_2", "feature_3", "feature_4", "target"]
+        assert set(table.column("target").to_pylist()) == {0, 1, 2}
+
+    def test_make_classification_is_reproducible(self) -> None:
+        kw = {"named": {"n_samples": pa.scalar(40), "n_features": pa.scalar(4), "random_state": pa.scalar(7)}}
+        a = invoke_table_function(MakeClassificationFunction, **kw).to_pydict()
+        b = invoke_table_function(MakeClassificationFunction, **kw).to_pydict()
+        assert a == b
+
+    def test_make_regression_target_is_float(self) -> None:
+        table = invoke_table_function(
+            MakeRegressionFunction,
+            named={"n_samples": pa.scalar(30), "n_features": pa.scalar(3), "noise": pa.scalar(2.0)},
+        )
+        assert table.num_rows == 30
+        assert table.schema.field("target").type == pa.float64()
+
+    def test_make_blobs_cluster_column(self) -> None:
+        table = invoke_table_function(
+            MakeBlobsFunction,
+            named={"n_samples": pa.scalar(90), "n_features": pa.scalar(2), "centers": pa.scalar(3)},
+        )
+        assert table.num_rows == 90
+        assert "cluster" in table.column_names
+        assert set(table.column("cluster").to_pylist()) == {0, 1, 2}
+
+    def test_make_moons(self) -> None:
+        table = invoke_table_function(MakeMoonsFunction, named={"n_samples": pa.scalar(50)})
+        assert table.num_rows == 50
+        assert table.column_names == ["sample_id", "feature_0", "feature_1", "target"]
+        assert set(table.column("target").to_pylist()) == {0, 1}
+
+    def test_make_circles(self) -> None:
+        table = invoke_table_function(MakeCirclesFunction, named={"n_samples": pa.scalar(50)})
+        assert table.num_rows == 50
+        assert set(table.column("target").to_pylist()) == {0, 1}
