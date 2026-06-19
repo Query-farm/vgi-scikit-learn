@@ -6,8 +6,11 @@ ENV PYTHONUNBUFFERED=1
 COPY vendor/vgi-rpc /app/vendor/vgi-rpc
 COPY vendor/vgi-python /app/vendor/vgi-python
 
-# Strip the local file:// URL pin on vgi-rpc so the vgi wheel resolves it from a sibling wheel.
-RUN sed -i 's|"vgi-rpc @ file://[^"]*"|"vgi-rpc"|' /app/vendor/vgi-python/pyproject.toml \
+# Normalize the vgi-rpc dependency: strip any local file:// pin and relax the
+# lower bound so the vendored vgi-rpc checkout satisfies it (the local checkout
+# may lag vgi-python's pinned version).
+RUN sed -i -E 's|"vgi-rpc @ file://[^"]*"|"vgi-rpc"|; s|"vgi-rpc>=[0-9.]+"|"vgi-rpc>=0.20.3"|' \
+        /app/vendor/vgi-python/pyproject.toml \
     && pip wheel --no-deps --wheel-dir /wheels "/app/vendor/vgi-rpc" \
     && pip wheel --no-deps --wheel-dir /wheels "/app/vendor/vgi-python"
 
@@ -21,7 +24,7 @@ COPY --from=builder /wheels /wheels
 # Install vendored wheels (--no-deps) with their extras' actual packages, then
 # scikit-learn (pulls numpy/scipy/joblib/threadpoolctl).
 RUN VGI_RPC_WHL=$(ls /wheels/vgi_rpc-*.whl) \
-    && VGI_WHL=$(ls /wheels/vgi-*.whl) \
+    && VGI_WHL=$(ls /wheels/vgi_python-*.whl) \
     && pip install --no-cache-dir "${VGI_RPC_WHL}[http,oauth,sentry]" "${VGI_WHL}" \
     && pip install --no-cache-dir authlib "scikit-learn>=1.5" numpy \
     && pip uninstall -y pip \

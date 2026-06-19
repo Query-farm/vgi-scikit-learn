@@ -17,6 +17,7 @@ other column is a numeric feature. Hyperparameters are passed as a JSON string.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from dataclasses import dataclass
 from typing import Annotated, Any, ClassVar
@@ -258,6 +259,8 @@ class PredictArgs:
 
 # Loaded estimators cached per query execution to avoid reloading each batch.
 _PREDICT_CACHE: dict[bytes, tuple[Any, ModelMetadata]] = {}
+# Execution ids for which a version-mismatch warning was already emitted.
+_VERSION_WARNED: set[bytes] = set()
 
 
 class PredictModel(TableInOutGenerator[PredictArgs]):
@@ -316,6 +319,17 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
     ) -> None:
         a = params.args
         estimator, meta = cls._model(params)
+
+        key = params.init_response.execution_id
+        if meta.sklearn_version and meta.sklearn_version != sklearn.__version__ and key not in _VERSION_WARNED:
+            _VERSION_WARNED.add(key)
+            with contextlib.suppress(Exception):
+                out.client_log(
+                    "warning",
+                    f"model {a.model_name!r} was fitted with scikit-learn {meta.sklearn_version}, "
+                    f"worker has {sklearn.__version__}; predictions may differ",
+                )
+
         x = matrix(pa.Table.from_batches([batch]), meta.feature_names)
 
         columns: dict[str, list[Any]] = {}

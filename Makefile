@@ -74,7 +74,10 @@ test-http:
 	@rm -rf "$(TEST_MODELS_DIR)"
 	@SKLEARN_MODELS_DIR="$(TEST_MODELS_DIR)" VGI_SIGNING_KEY=dev .venv/bin/python serve.py --port $(HTTP_PORT) & \
 		SERVER_PID=$$!; \
-		sleep 2; \
+		for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
+			curl -fsS -o /dev/null "http://localhost:$(HTTP_PORT)/health" 2>/dev/null && break; \
+			sleep 1; \
+		done; \
 		VGI_SKLEARN_WORKER="$(WORKER_HTTP)" $(TEST_RUNNER) --test-dir "$(TEST_DIR)" "$(TEST_PATTERN)"; \
 		TEST_EXIT=$$?; \
 		kill $$SERVER_PID 2>/dev/null; \

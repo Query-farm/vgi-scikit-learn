@@ -222,6 +222,44 @@ class BreastCancerFunction(_ToyDataset):
         ]
 
 
+_CALIFORNIA_SCHEMA = _regression_schema(
+    ["MedInc", "HouseAge", "AveRooms", "AveBedrms", "Population", "AveOccup", "Latitude", "Longitude"]
+)
+
+
+@init_single_worker
+@bind_fixed_schema
+class CaliforniaHousingFunction(TableFunctionGenerator[NoArgs]):
+    """California housing regression: 20640 districts, 8 features, median house value.
+
+    Downloaded from scikit-learn on first use and cached under the standard
+    scikit-learn data home (``~/scikit_learn_data`` or ``SCIKIT_LEARN_DATA``).
+    """
+
+    FIXED_SCHEMA: ClassVar[pa.Schema] = _CALIFORNIA_SCHEMA
+
+    class Meta:
+        name = "california_housing"
+        description = "California housing prices (20640 districts, 8 features, regression)"
+        categories = ["datasets", "regression", "fetched"]
+        projection_pushdown = True
+        examples = [
+            FunctionExample(
+                sql="SELECT * FROM sklearn.california_housing()",
+                description="Load the California housing dataset (downloads on first use)",
+            )
+        ]
+
+    @classmethod
+    def cardinality(cls, params: BindParams[NoArgs]) -> TableCardinality:
+        return TableCardinality(estimate=20640, max=20640)
+
+    @classmethod
+    def process(cls, params: ProcessParams[NoArgs], state: None, out: OutputCollector) -> None:
+        bunch = skd.fetch_california_housing()
+        _emit_matrix(bunch.data, {"target": [float(t) for t in bunch.target]}, cls.FIXED_SCHEMA, out, params.output_schema)
+
+
 @init_single_worker
 @bind_fixed_schema
 class DiabetesFunction(_ToyDataset):
@@ -478,6 +516,7 @@ DATASET_FUNCTIONS: list[type] = [
     DigitsFunction,
     BreastCancerFunction,
     DiabetesFunction,
+    CaliforniaHousingFunction,
     MakeClassificationFunction,
     MakeRegressionFunction,
     MakeBlobsFunction,

@@ -43,6 +43,7 @@ from vgi_sklearn import __version__
 from vgi_sklearn.datasets import DATASET_FUNCTIONS
 from vgi_sklearn.metrics import METRIC_FUNCTIONS
 from vgi_sklearn.models import MODEL_FUNCTIONS
+from vgi_sklearn.table_metrics import TABLE_METRIC_FUNCTIONS
 from vgi_sklearn.transforms import TRANSFORM_FUNCTIONS
 
 log = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ GIT_COMMIT = os.environ.get("VGI_SKLEARN_GIT_COMMIT") or "unknown"
 _FUNCTIONS: list[type] = [
     *DATASET_FUNCTIONS,
     *METRIC_FUNCTIONS,
+    *TABLE_METRIC_FUNCTIONS,
     *TRANSFORM_FUNCTIONS,
     *MODEL_FUNCTIONS,
 ]

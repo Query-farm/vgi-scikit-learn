@@ -137,3 +137,19 @@ class TestGenerators:
         table = invoke_table_function(MakeCirclesFunction, named={"n_samples": pa.scalar(50)})
         assert table.num_rows == 50
         assert set(table.column("target").to_pylist()) == {0, 1}
+
+
+class TestFetchers:
+    def test_california_housing(self) -> None:
+        # Downloads on first use; skip cleanly when offline / not cached.
+        try:
+            from vgi_sklearn.datasets import CaliforniaHousingFunction
+
+            table = invoke_table_function(CaliforniaHousingFunction)
+        except Exception as exc:  # noqa: BLE001 - network/cache dependent
+            import pytest
+
+            pytest.skip(f"california_housing unavailable: {exc}")
+        assert table.num_rows == 20640
+        assert table.schema.field("target").type == pa.float64()
+        assert "MedInc" in [c.lower() for c in table.column_names] or "medinc" in table.column_names

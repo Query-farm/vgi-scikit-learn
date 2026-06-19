@@ -1,0 +1,67 @@
+# name: test/sql/sklearn_polish.test
+# description: confusion_matrix, silhouette_score, and composed pipelines
+# group: [vgi_sklearn]
+
+require-env VGI_SKLEARN_WORKER
+
+require vgi
+
+require httpfs
+
+statement ok
+ATTACH 'sklearn' AS sklearn (TYPE vgi, LOCATION '${VGI_SKLEARN_WORKER}');
+
+# ---- confusion_matrix in long format ----
+
+statement ok
+CREATE TEMP TABLE preds AS
+SELECT * FROM (VALUES (0,0),(0,0),(1,1),(1,0),(2,2)) AS t(y, yhat);
+
+# diagonal-ish: total counts sum to the row count
+query I
+SELECT sum(count) FROM sklearn.confusion_matrix((SELECT y, yhat FROM preds), actual => 'y', predicted => 'yhat');
+----
+5
+
+# the (1 -> 0) misclassification is present with count 1
+query I
+SELECT count FROM sklearn.confusion_matrix((SELECT y, yhat FROM preds), actual => 'y', predicted => 'yhat')
+WHERE actual = 1 AND predicted = 0;
+----
+1
+
+# ---- silhouette_score on well-separated blobs is strongly positive ----
+
+query I
+SELECT silhouette_score > 0.5 FROM sklearn.silhouette_score(
+  (SELECT sample_id, feature_0, feature_1, cluster
+   FROM sklearn.make_blobs(n_samples => 150, centers => 3, cluster_std => 0.5)),
+  label => 'cluster', id => 'sample_id');
+----
+true
+
+# ---- composed pipeline: scale -> kmeans -> score the clustering ----
+
+query I
+SELECT count(DISTINCT cluster) FROM sklearn.kmeans(
+  (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm
+   FROM sklearn.standard_scaler(
+     (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm FROM sklearn.iris()),
+     id => 'sample_id')),
+  id => 'sample_id', n_clusters => 3);
+----
+3
+
+# ---- metrics over cross_val_predict output ----
+
+query I
+SELECT sklearn.accuracy_score(i.target, p.prediction) > 0.8
+FROM sklearn.cross_val_predict(
+  (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target FROM sklearn.iris()),
+  estimator => 'logistic_regression', target => 'target', id => 'sample_id') p
+JOIN sklearn.iris() i USING (sample_id);
+----
+true
+
+statement ok
+DETACH sklearn;
