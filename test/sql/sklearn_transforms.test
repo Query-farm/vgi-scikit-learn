@@ -1,0 +1,79 @@
+# name: test/sql/sklearn_transforms.test
+# description: Unsupervised transforms (buffering fit_transform) end-to-end
+# group: [vgi_sklearn]
+
+require-env VGI_SKLEARN_WORKER
+
+require vgi
+
+require httpfs
+
+statement ok
+ATTACH 'sklearn' AS sklearn (TYPE vgi, LOCATION '${VGI_SKLEARN_WORKER}');
+
+# A numeric feature view of iris (drop target / target_name).
+statement ok
+CREATE TEMP VIEW iris_feats AS
+  SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm
+  FROM sklearn.iris();
+
+# ---- StandardScaler: rows preserved, scaled column has ~0 mean and ~1 std ----
+
+query I
+SELECT count(*) FROM sklearn.standard_scaler((SELECT * FROM iris_feats), id => 'sample_id');
+----
+150
+
+query II
+SELECT abs(avg(sepal_length_cm)) < 1e-9, abs(stddev_pop(sepal_length_cm) - 1) < 1e-6
+FROM sklearn.standard_scaler((SELECT * FROM iris_feats), id => 'sample_id');
+----
+true	true
+
+# id is carried through unchanged and is joinable
+query I
+SELECT count(*) FROM sklearn.standard_scaler((SELECT * FROM iris_feats), id => 'sample_id') s
+JOIN sklearn.iris() i USING (sample_id);
+----
+150
+
+# ---- MinMaxScaler: every value lands in [0, 1] ----
+
+query I
+SELECT bool_and(petal_length_cm BETWEEN 0 AND 1)
+FROM sklearn.minmax_scaler((SELECT * FROM iris_feats), id => 'sample_id');
+----
+true
+
+# ---- PCA: id + 2 components = 3 columns, 150 rows ----
+
+query I
+SELECT count(*) FROM (DESCRIBE
+  SELECT * FROM sklearn.pca((SELECT * FROM iris_feats), id => 'sample_id', n_components => 2));
+----
+3
+
+query I
+SELECT count(*) FROM sklearn.pca((SELECT * FROM iris_feats), id => 'sample_id', n_components => 2);
+----
+150
+
+# ---- KMeans on well-separated blobs recovers the 3 clusters ----
+
+query I
+SELECT count(DISTINCT cluster) FROM sklearn.kmeans(
+  (SELECT sample_id, feature_0, feature_1 FROM sklearn.make_blobs(n_samples => 150, centers => 3)),
+  id => 'sample_id', n_clusters => 3);
+----
+3
+
+# ---- IsolationForest flags some but not all rows as outliers ----
+
+query I
+SELECT (sum(is_outlier) > 0 AND sum(is_outlier) < count(*))
+FROM sklearn.isolation_forest((SELECT * FROM iris_feats), id => 'sample_id', contamination => 0.1);
+----
+true
+
+statement ok
+DETACH sklearn;

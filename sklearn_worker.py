@@ -42,6 +42,7 @@ from vgi.catalog.catalog_interface import CatalogAttachResult, CatalogInfo
 from vgi_sklearn import __version__
 from vgi_sklearn.datasets import DATASET_FUNCTIONS
 from vgi_sklearn.metrics import METRIC_FUNCTIONS
+from vgi_sklearn.transforms import TRANSFORM_FUNCTIONS
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ GIT_COMMIT = os.environ.get("VGI_SKLEARN_GIT_COMMIT") or "unknown"
 _FUNCTIONS: list[type] = [
     *DATASET_FUNCTIONS,
     *METRIC_FUNCTIONS,
+    *TRANSFORM_FUNCTIONS,
 ]
 
 _SKLEARN_CATALOG = Catalog(
