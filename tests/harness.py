@@ -91,3 +91,29 @@ def invoke_table_function(
         func_cls.process(params, state, out)
 
     return pa.Table.from_batches(out.batches, schema=bind_resp.output_schema)
+
+
+def run_aggregate(
+    func_cls: type,
+    y_true: list[float],
+    y_pred: list[float],
+    *,
+    group_ids: list[int] | None = None,
+) -> dict[int, float | None]:
+    """Drive an AggregateFunction through initial_state -> update -> finalize.
+
+    Returns a ``{group_id: result}`` mapping. With no ``group_ids`` all rows
+    fall in group 0, so ``run_aggregate(...)[0]`` is the single scalar result.
+    """
+    n = len(y_true)
+    gids = group_ids if group_ids is not None else [0] * n
+    states = {g: func_cls.initial_state(None) for g in set(gids)}
+    func_cls.update(
+        states,
+        pa.array(gids, type=pa.int64()),
+        pa.array(y_true, type=pa.float64()),
+        pa.array(y_pred, type=pa.float64()),
+    )
+    ordered = sorted(states)
+    batch = func_cls.finalize(pa.array(ordered, type=pa.int64()), states, None)
+    return dict(zip(ordered, batch.column("result").to_pylist()))

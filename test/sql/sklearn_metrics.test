@@ -1,0 +1,60 @@
+# name: test/sql/sklearn_metrics.test
+# description: Metric aggregate functions over (y_true, y_pred)
+# group: [vgi_sklearn]
+
+require-env VGI_SKLEARN_WORKER
+
+require vgi
+
+require httpfs
+
+statement ok
+ATTACH 'sklearn' AS sklearn (TYPE vgi, LOCATION '${VGI_SKLEARN_WORKER}');
+
+# A tiny predictions table
+statement ok
+CREATE TEMP TABLE preds AS
+SELECT * FROM (VALUES
+  (1.0, 1.0),
+  (2.0, 2.0),
+  (3.0, 3.0),
+  (4.0, 4.0)
+) AS t(actual, predicted);
+
+# Perfect predictions: R^2 = 1, MSE = 0, MAE = 0
+query III
+SELECT
+  round(sklearn.r2_score(actual, predicted), 6),
+  round(sklearn.mean_squared_error(actual, predicted), 6),
+  round(sklearn.mean_absolute_error(actual, predicted), 6)
+FROM preds;
+----
+1.0	0.0	0.0
+
+# Classification: 3 of 4 correct -> accuracy 0.75
+statement ok
+CREATE TEMP TABLE cls AS
+SELECT * FROM (VALUES (0,0),(1,1),(0,1),(1,1)) AS t(y, yhat);
+
+query I
+SELECT round(sklearn.accuracy_score(y, yhat), 4) FROM cls;
+----
+0.75
+
+# Grouped metrics: one perfect group, one inverted group
+statement ok
+CREATE TEMP TABLE g AS
+SELECT * FROM (VALUES
+  ('a', 1.0, 1.0), ('a', 2.0, 2.0), ('a', 3.0, 3.0),
+  ('b', 1.0, 3.0), ('b', 2.0, 2.0), ('b', 3.0, 1.0)
+) AS t(grp, actual, predicted);
+
+query II
+SELECT grp, round(sklearn.r2_score(actual, predicted), 4) AS r2
+FROM g GROUP BY grp ORDER BY grp;
+----
+a	1.0
+b	-3.0
+
+statement ok
+DETACH sklearn;
