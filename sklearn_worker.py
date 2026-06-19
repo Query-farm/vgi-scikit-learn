@@ -42,6 +42,7 @@ from vgi.catalog.catalog_interface import CatalogAttachResult, CatalogInfo
 from vgi_sklearn import __version__
 from vgi_sklearn.datasets import DATASET_FUNCTIONS
 from vgi_sklearn.metrics import METRIC_FUNCTIONS
+from vgi_sklearn.models import MODEL_FUNCTIONS
 from vgi_sklearn.transforms import TRANSFORM_FUNCTIONS
 
 log = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ _FUNCTIONS: list[type] = [
     *DATASET_FUNCTIONS,
     *METRIC_FUNCTIONS,
     *TRANSFORM_FUNCTIONS,
+    *MODEL_FUNCTIONS,
 ]
 
 _SKLEARN_CATALOG = Catalog(

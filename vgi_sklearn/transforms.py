@@ -23,43 +23,14 @@ from typing import Annotated, Any, ClassVar
 
 import numpy as np
 import pyarrow as pa
-from vgi_rpc import ArrowSerializableDataclass
 from vgi.arguments import Arg, TableInput
 from vgi.invocation import BindResponse
 from vgi.metadata import FunctionExample
-from vgi.table_buffering_function import OutputCollector, TableBufferingFunction, TableBufferingParams
+from vgi.table_buffering_function import OutputCollector, TableBufferingParams
 from vgi.table_function import BindParams
 
+from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
 from .schema_utils import field as sfield
-
-_DATA_KEY = b"input_batches"
-
-
-@dataclass(kw_only=True)
-class DrainState(ArrowSerializableDataclass):
-    """Per-finalize-stream cursor: emit the transformed table once, then finish."""
-
-    done: bool = False
-
-
-def _serialize_batch(batch: pa.RecordBatch) -> bytes:
-    sink = pa.BufferOutputStream()
-    with pa.ipc.new_stream(sink, batch.schema) as writer:
-        writer.write_batch(batch)
-    return sink.getvalue().to_pybytes()
-
-
-def _deserialize_batches(value: bytes) -> list[pa.RecordBatch]:
-    reader = pa.ipc.open_stream(pa.BufferReader(value))
-    return reader.read_all().to_batches()
-
-
-def _matrix(table: pa.Table, feature_names: list[str]) -> np.ndarray:
-    """Assemble the feature columns into a 2D float64 numpy array."""
-    cols = [np.asarray(table.column(name).to_numpy(zero_copy_only=False), dtype=float) for name in feature_names]
-    if not cols:
-        return np.empty((table.num_rows, 0), dtype=float)
-    return np.column_stack(cols)
 
 
 @dataclass(slots=True, frozen=True)
@@ -68,7 +39,7 @@ class _BaseArgs:
     id: Annotated[str, Arg("id", default="", doc="Optional column to carry through unchanged to the output")]
 
 
-class _BufferingTransform[TArgs](TableBufferingFunction[TArgs, DrainState]):
+class _BufferingTransform[TArgs](SinkBuffer[TArgs, DrainState]):
     """Buffer the whole input, fit_transform once in finalize, stream out.
 
     Subclasses set ``FunctionArguments`` and implement ``output_fields`` (the
@@ -96,22 +67,10 @@ class _BufferingTransform[TArgs](TableBufferingFunction[TArgs, DrainState]):
         fields.extend(cls.output_fields(feats, args))
         return pa.schema(fields)
 
-    # ---- bind / sink / combine / source ----
-
     @classmethod
     def on_bind(cls, params: BindParams[TArgs]) -> BindResponse:
         assert params.bind_call.input_schema is not None
         return BindResponse(output_schema=cls.build_output_schema(params.bind_call.input_schema, params.args))
-
-    @classmethod
-    def process(cls, batch: pa.RecordBatch, params: TableBufferingParams[TArgs]) -> bytes:
-        if batch.num_rows:
-            params.storage.state_append(_DATA_KEY, b"", _serialize_batch(batch))
-        return params.execution_id
-
-    @classmethod
-    def combine(cls, state_ids: list[bytes], params: TableBufferingParams[TArgs]) -> list[bytes]:
-        return [params.execution_id]
 
     @classmethod
     def initial_finalize_state(cls, finalize_state_id: bytes, params: TableBufferingParams[TArgs]) -> DrainState:
@@ -130,22 +89,17 @@ class _BufferingTransform[TArgs](TableBufferingFunction[TArgs, DrainState]):
             return
         state.done = True
 
-        input_schema = params.init_call.bind_call.input_schema
-        assert input_schema is not None
+        input_schema = input_schema_of(params)
         id_col = params.args.id
         feats = cls.feature_names(input_schema, id_col)
 
-        batches: list[pa.RecordBatch] = []
-        for _sid, value in params.storage.state_log_scan(_DATA_KEY, b""):
-            batches.extend(_deserialize_batches(value))
-
-        if not batches:
+        table = cls.buffered_table(params, input_schema)
+        if table is None:
             empty = {name: [] for name in params.output_schema.names}
             out.emit(pa.RecordBatch.from_pydict(empty, schema=params.output_schema))
             return
 
-        table = pa.Table.from_batches(batches, schema=input_schema)
-        x = _matrix(table, feats)
+        x = matrix(table, feats)
         columns: dict[str, list[Any]] = {}
         if id_col:
             columns[id_col] = table.column(id_col).to_pylist()

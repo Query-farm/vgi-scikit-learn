@@ -25,6 +25,9 @@ HTTP_PORT      ?= 8000
 # Fly.io config
 FLY_APP        ?= vgi-sklearn
 
+# Isolated model registry for local SQL tests (stdio/http workers inherit this).
+TEST_MODELS_DIR ?= $(CURDIR)/.test-models
+
 .PHONY: test pytest test-stdio test-http test-cloud build push smoke-test deploy vendor-sync venv
 
 venv:
@@ -58,7 +61,9 @@ pytest:
 test: pytest test-stdio test-http
 
 test-stdio:
-	VGI_SKLEARN_WORKER="$(WORKER_STDIO)" $(TEST_RUNNER) --test-dir "$(TEST_DIR)" "$(TEST_PATTERN)"
+	rm -rf "$(TEST_MODELS_DIR)"
+	SKLEARN_MODELS_DIR="$(TEST_MODELS_DIR)" VGI_SKLEARN_WORKER="$(WORKER_STDIO)" \
+		$(TEST_RUNNER) --test-dir "$(TEST_DIR)" "$(TEST_PATTERN)"
 
 test-http:
 	@if lsof -iTCP:$(HTTP_PORT) -sTCP:LISTEN -t >/dev/null 2>&1; then \
@@ -66,7 +71,8 @@ test-http:
 		echo "  Kill the existing process: kill $$(lsof -iTCP:$(HTTP_PORT) -sTCP:LISTEN -t)" >&2; \
 		exit 1; \
 	fi
-	@VGI_SIGNING_KEY=dev .venv/bin/python serve.py --port $(HTTP_PORT) & \
+	@rm -rf "$(TEST_MODELS_DIR)"
+	@SKLEARN_MODELS_DIR="$(TEST_MODELS_DIR)" VGI_SIGNING_KEY=dev .venv/bin/python serve.py --port $(HTTP_PORT) & \
 		SERVER_PID=$$!; \
 		sleep 2; \
 		VGI_SKLEARN_WORKER="$(WORKER_HTTP)" $(TEST_RUNNER) --test-dir "$(TEST_DIR)" "$(TEST_PATTERN)"; \

@@ -1,0 +1,104 @@
+# name: test/sql/sklearn_models.test
+# description: Supervised fit/predict + model registry end-to-end
+# group: [vgi_sklearn]
+
+require-env VGI_SKLEARN_WORKER
+
+require vgi
+
+require httpfs
+
+statement ok
+ATTACH 'sklearn' AS sklearn (TYPE vgi, LOCATION '${VGI_SKLEARN_WORKER}');
+
+statement ok
+CREATE TEMP VIEW iris_xy AS
+  SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target
+  FROM sklearn.iris();
+
+statement ok
+CREATE TEMP VIEW iris_x AS
+  SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm
+  FROM sklearn.iris();
+
+# ---- fit a classifier; the summary row reports the training shape ----
+
+query III
+SELECT task, n_samples, n_features
+FROM sklearn.fit((SELECT * FROM iris_xy), model_name => 'iris_rf',
+                 estimator => 'random_forest_classifier', target => 'target', id => 'sample_id');
+----
+classification	150	4
+
+# ---- it is now in the registry ----
+
+query II
+SELECT model_name, task FROM sklearn.list_models() WHERE model_name = 'iris_rf';
+----
+iris_rf	classification
+
+query I
+SELECT n_classes FROM sklearn.model_info('iris_rf');
+----
+3
+
+# ---- predict: in-sample accuracy is high and all 3 classes appear ----
+
+query I
+SELECT avg(CASE WHEN p.prediction = i.target THEN 1 ELSE 0 END) > 0.9
+FROM sklearn.predict((SELECT * FROM iris_x), model_name => 'iris_rf', id => 'sample_id') p
+JOIN sklearn.iris() i USING (sample_id);
+----
+true
+
+query I
+SELECT count(DISTINCT prediction)
+FROM sklearn.predict((SELECT * FROM iris_x), model_name => 'iris_rf', id => 'sample_id');
+----
+3
+
+# ---- with_proba adds one probability column per class (id + prediction + 3) ----
+
+query I
+SELECT count(*) FROM (DESCRIBE
+  SELECT * FROM sklearn.predict((SELECT * FROM iris_x), model_name => 'iris_rf', id => 'sample_id', with_proba => true));
+----
+5
+
+# probabilities sum to 1 for every row
+query I
+SELECT bool_and(abs(proba_0 + proba_1 + proba_2 - 1) < 1e-9)
+FROM sklearn.predict((SELECT * FROM iris_x), model_name => 'iris_rf', id => 'sample_id', with_proba => true);
+----
+true
+
+# ---- cross_val_predict scores every row out-of-fold, no model stored ----
+
+query I
+SELECT count(*) FROM sklearn.cross_val_predict((SELECT * FROM iris_xy),
+  estimator => 'logistic_regression', target => 'target', id => 'sample_id', cv => 5);
+----
+150
+
+# ---- a regression model fits and is tagged regression ----
+
+query I
+SELECT task FROM sklearn.fit((SELECT * FROM sklearn.diabetes()), model_name => 'diab_ridge',
+                             estimator => 'ridge', target => 'target', id => 'sample_id');
+----
+regression
+
+# ---- drop_model removes it ----
+
+query II
+SELECT model_name, dropped FROM sklearn.drop_model('iris_rf');
+----
+iris_rf	true
+
+query I
+SELECT count(*) FROM sklearn.model_info('iris_rf');
+----
+0
+
+statement ok
+DETACH sklearn;
