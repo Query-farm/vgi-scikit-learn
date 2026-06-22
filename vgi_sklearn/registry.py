@@ -5,14 +5,14 @@ The ``ModelStore`` interface is the seam where an S3/R2 backend drops in later
 without touching ``models.py``.
 
 Each model is two artifacts:
-* ``<name>.joblib`` -- the pickled scikit-learn estimator
+* ``<name>.skops``  -- the scikit-learn estimator, serialized with skops (a
+  safe, non-pickle format that reconstructs only known types on load)
 * ``<name>.json``   -- ``ModelMetadata`` (estimator type, ordered feature names,
   target, classes, hyperparameters, train score, library versions, timestamp)
 """
 
 from __future__ import annotations
 
-import io
 import json
 import os
 import re
@@ -22,9 +22,32 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import joblib
+import skops.io as sio
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+# Estimators are persisted with skops (not pickle): loading reconstructs only a
+# known set of types instead of executing arbitrary code. We additionally
+# restrict the trusted set to the scikit-learn / numpy / scipy namespaces, so a
+# crafted artifact cannot smuggle in an arbitrary callable (e.g. os.system).
+_TRUSTED_PREFIXES = ("sklearn.", "numpy.", "numpy", "scipy.", "scipy")
+
+
+class UntrustedModelError(ValueError):
+    """Raised when a serialized model contains types outside the trusted namespaces."""
+
+
+def _skops_dumps(estimator: Any) -> bytes:
+    return sio.dumps(estimator)
+
+
+def _skops_loads(data: bytes) -> Any:
+    """Safely load a skops-serialized estimator, trusting only sklearn/numpy/scipy types."""
+    untrusted = sio.get_untrusted_types(data=data)
+    disallowed = [t for t in untrusted if not t.startswith(_TRUSTED_PREFIXES)]
+    if disallowed:
+        raise UntrustedModelError(f"refusing to load model containing untrusted type(s): {', '.join(disallowed)}")
+    return sio.loads(data, trusted=untrusted)
 
 
 class ModelNameError(ValueError):
@@ -92,26 +115,26 @@ class ModelStore:
 
 
 class LocalDiskStore(ModelStore):
-    """Stores models as ``<root>/<name>.joblib`` + ``<root>/<name>.json``."""
+    """Stores models as ``<root>/<name>.skops`` + ``<root>/<name>.json``."""
 
     def __init__(self, root: str | os.PathLike[str]) -> None:
         self.root = Path(root)
 
     def _paths(self, name: str) -> tuple[Path, Path]:
         validate_name(name)
-        return self.root / f"{name}.joblib", self.root / f"{name}.json"
+        return self.root / f"{name}.skops", self.root / f"{name}.json"
 
     def save(self, estimator: Any, meta: ModelMetadata) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         model_path, meta_path = self._paths(meta.name)
-        joblib.dump(estimator, model_path)
+        model_path.write_bytes(_skops_dumps(estimator))
         meta_path.write_text(json.dumps(meta.to_dict(), indent=2, default=str))
 
     def load(self, name: str) -> tuple[Any, ModelMetadata]:
         model_path, _ = self._paths(name)
         if not model_path.exists():
             raise ModelNotFoundError(name)
-        return joblib.load(model_path), self.load_meta(name)
+        return _skops_loads(model_path.read_bytes()), self.load_meta(name)
 
     def load_meta(self, name: str) -> ModelMetadata:
         _, meta_path = self._paths(name)
@@ -171,7 +194,7 @@ def now_iso() -> str:
 # ---------------------------------------------------------------------------
 # Self-contained model BLOB (estimator + metadata in one value)
 #
-# Layout: 4-byte big-endian metadata-JSON length || metadata JSON || joblib bytes.
+# Layout: 4-byte big-endian metadata-JSON length || metadata JSON || skops bytes.
 # Lets a fitted model flow through SQL as a single BLOB column and live inside a
 # DuckDB table instead of (or alongside) the on-disk registry. DuckDB BLOB
 # values are capped near 2 GB, so very large ensembles may not fit.
@@ -180,10 +203,9 @@ def now_iso() -> str:
 
 def pack_model(estimator: Any, meta: ModelMetadata) -> bytes:
     """Serialize ``(estimator, metadata)`` into one self-describing BLOB."""
-    buf = io.BytesIO()
-    joblib.dump(estimator, buf)
+    est_bytes = _skops_dumps(estimator)
     meta_bytes = json.dumps(meta.to_dict(), default=str).encode("utf-8")
-    return struct.pack(">I", len(meta_bytes)) + meta_bytes + buf.getvalue()
+    return struct.pack(">I", len(meta_bytes)) + meta_bytes + est_bytes
 
 
 def _split_blob(blob: bytes) -> tuple[bytes, bytes]:
@@ -202,7 +224,7 @@ def unpack_meta(blob: bytes) -> ModelMetadata:
 
 
 def unpack_model(blob: bytes) -> tuple[Any, ModelMetadata]:
-    """Read both estimator and metadata from a model BLOB."""
+    """Read both estimator and metadata from a model BLOB (skops safe-load)."""
     meta_bytes, est_bytes = _split_blob(blob)
     meta = ModelMetadata.from_dict(json.loads(meta_bytes))
-    return joblib.load(io.BytesIO(est_bytes)), meta
+    return _skops_loads(est_bytes), meta

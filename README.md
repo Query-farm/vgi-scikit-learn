@@ -182,13 +182,22 @@ named models survive machine restarts. `predict` records the scikit-learn versio
 used to fit and logs a warning (visible in `duckdb_logs()`) if the worker's
 version differs.
 
-> [!WARNING]
-> **Loading a model deserializes a pickle (via joblib).** Unpickling executes
-> arbitrary code, so only `predict(model := ...)` from BLOBs and registry
-> entries you trust — treat a model BLOB like executable code, not data. Don't
-> load models from untrusted sources, and restrict who can write to
-> `SKLEARN_MODELS_DIR` / the registry backend. This is inherent to
-> scikit-learn's pickle-based persistence.
+### Model serialization & safety
+
+Models are stored with [**skops**](https://skops.readthedocs.io/), not pickle.
+Loading reconstructs only a known set of types instead of executing arbitrary
+code, and this worker further restricts the trusted set to the
+`scikit-learn` / `numpy` / `scipy` namespaces — a crafted artifact cannot smuggle
+in an arbitrary callable (e.g. `os.system`); it's rejected with a clear error.
+
+> [!NOTE]
+> skops removes pickle's arbitrary-code-execution risk, but it is not a trust
+> oracle — keep `SKLEARN_MODELS_DIR` / the registry backend writable only by
+> trusted users. skops also stores scikit-learn objects, so it is **not**
+> version-independent: a model may fail to load or behave differently under a
+> different scikit-learn version. The worker records the fitting version and
+> logs a `duckdb_logs()` warning on mismatch. (For fully version-independent
+> inference you would export to ONNX, at the cost of estimator coverage.)
 
 ## Local development
 

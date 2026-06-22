@@ -26,7 +26,7 @@ COPY --from=builder /wheels /wheels
 RUN VGI_RPC_WHL=$(ls /wheels/vgi_rpc-*.whl) \
     && VGI_WHL=$(ls /wheels/vgi_python-*.whl) \
     && pip install --no-cache-dir "${VGI_RPC_WHL}[http,oauth,sentry]" "${VGI_WHL}" \
-    && pip install --no-cache-dir authlib "scikit-learn>=1.5" numpy \
+    && pip install --no-cache-dir authlib "scikit-learn>=1.5" numpy "skops>=0.11" \
     && pip uninstall -y pip \
     && rm -rf /wheels
 

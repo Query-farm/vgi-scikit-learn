@@ -135,6 +135,15 @@ class TestModelBlob:
         with pytest.raises(ValueError, match="valid sklearn model BLOB"):
             unpack_meta(b"\x00\x00")
 
+    def test_rejects_untrusted_types(self, monkeypatch) -> None:
+        # The safe-loader must refuse types outside sklearn/numpy/scipy, even if
+        # skops itself would surface them as "untrusted to confirm".
+        import vgi_sklearn.registry as reg
+
+        monkeypatch.setattr(reg.sio, "get_untrusted_types", lambda **_: ["os.system", "sklearn.foo.Bar"])
+        with pytest.raises(reg.UntrustedModelError, match="os.system"):
+            reg._skops_loads(b"whatever")
+
 
 class TestTypedFitSpec:
     def test_every_estimator_has_a_spec(self) -> None:

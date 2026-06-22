@@ -5,6 +5,7 @@
 #     "vgi-rpc[sentry]",
 #     "scikit-learn>=1.5",
 #     "numpy",
+#     "skops>=0.11",
 # ]
 #
 # [tool.uv.sources]

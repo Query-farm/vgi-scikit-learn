@@ -35,7 +35,7 @@ venv:
 	uv pip install --python .venv \
 		"vgi-python[http,oauth] @ $(VGI_PYTHON_SRC)" \
 		"vgi-rpc[sentry] @ $(VGI_RPC_SRC)" \
-		"scikit-learn>=1.5" numpy pytest
+		"scikit-learn>=1.5" numpy "skops>=0.11" pytest
 
 vendor-sync:
 	@for src in "$(VGI_PYTHON_SRC)" "$(VGI_RPC_SRC)"; do \

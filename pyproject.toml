@@ -24,7 +24,7 @@ dependencies = [
     "vgi-python[http]>=0.8.1",
     "scikit-learn>=1.5",
     "numpy",
-    "joblib",
+    "skops>=0.11",
 ]
 
 # Console scripts. `vgi-sklearn` runs the stdio transport (DuckDB spawns it);
