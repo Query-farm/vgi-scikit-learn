@@ -25,9 +25,15 @@ import sys
 
 from sklearn_worker import SklearnWorker
 
-if __name__ == "__main__":
+
+def main() -> None:
+    """Run the worker over HTTP (injects ``--http`` into the worker CLI)."""
     argv = sys.argv[1:]
     if "--http" not in argv:
         argv = ["--http", *argv]
     sys.argv = [sys.argv[0], *argv]
     SklearnWorker.main()
+
+
+if __name__ == "__main__":
+    main()

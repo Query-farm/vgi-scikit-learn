@@ -7,7 +7,9 @@ registry — all callable as SQL functions.
 
 ```sql
 INSTALL vgi FROM community; LOAD vgi;
-ATTACH 'sklearn' (TYPE vgi, LOCATION 'uv run sklearn_worker.py');
+-- attach the installed worker (pip/uv install vgi-sklearn provides the
+-- `vgi-sklearn` launcher); for a source checkout use 'uv run sklearn_worker.py'.
+ATTACH 'sklearn' (TYPE vgi, LOCATION 'vgi-sklearn');
 
 SELECT * FROM sklearn.iris();
 SELECT sklearn.r2_score(actual, predicted) FROM my_predictions;
@@ -180,17 +182,38 @@ named models survive machine restarts. `predict` records the scikit-learn versio
 used to fit and logs a warning (visible in `duckdb_logs()`) if the worker's
 version differs.
 
+> [!WARNING]
+> **Loading a model deserializes a pickle (via joblib).** Unpickling executes
+> arbitrary code, so only `predict(model := ...)` from BLOBs and registry
+> entries you trust — treat a model BLOB like executable code, not data. Don't
+> load models from untrusted sources, and restrict who can write to
+> `SKLEARN_MODELS_DIR` / the registry backend. This is inherent to
+> scikit-learn's pickle-based persistence.
+
 ## Local development
 
 ```sh
-make venv          # create .venv with vgi + scikit-learn (from local checkouts)
-make pytest        # unit tests
-make test-stdio    # SQL integration tests with the worker as a subprocess
+uv sync                       # install the worker + deps from uv.lock (PyPI vgi-python)
+uv run pytest tests/ -q       # unit tests
+uvx ruff check . && uvx ruff format --check .   # lint + format
+```
+
+For developing against **local** `vgi-python` / `vgi-rpc` checkouts instead of
+PyPI, use the Makefile targets (they point the worker at `uv run
+sklearn_worker.py` and install the local sources):
+
+```sh
+make venv          # .venv with vgi + scikit-learn from local checkouts
+make test-stdio    # SQL integration tests, worker as a subprocess
 make test-http     # SQL integration tests against a local HTTP server
 ```
 
-SQL tests require DuckDB's `unittest` runner built with the VGI extension
-(`VGI_BUILD_DIR`).
+The SQL suite (`test/sql/*.test`) is the authoritative integration test. CI
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs both unit and SQL
+suites on Linux/macOS/Windows against the **signed community `vgi` extension**
+via a prebuilt `haybarn-unittest` — no local C++ build required (see
+[`ci/README.md`](ci/README.md)). Locally the SQL suite also runs against a
+DuckDB `unittest` binary built with the VGI extension (`VGI_BUILD_DIR`).
 
 ## Deployment (Fly.io)
 
@@ -213,8 +236,13 @@ vgi_sklearn/
   metrics.py           metric aggregates
   table_metrics.py     confusion_matrix / silhouette_score
   transforms.py        unsupervised fit_transform (buffering)
-  models.py            fit / predict / cross_val_predict / registry mgmt
-  registry.py          ModelStore (local disk; S3/R2 seam)
+  models.py            generic fit / predict / cross_val_predict / registry mgmt
+  typed_models.py      generated fit_<estimator> functions (typed hyperparameters)
+  registry.py          ModelStore (local disk; S3/R2 seam) + model-BLOB pack/unpack
   buffering.py         shared sink/combine/matrix helpers
   schema_utils.py      Arrow schema helpers
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).

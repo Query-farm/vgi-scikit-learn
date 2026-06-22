@@ -101,7 +101,15 @@ class TestGenerators:
             },
         )
         assert table.num_rows == 60
-        assert table.column_names == ["sample_id", "feature_0", "feature_1", "feature_2", "feature_3", "feature_4", "target"]
+        assert table.column_names == [
+            "sample_id",
+            "feature_0",
+            "feature_1",
+            "feature_2",
+            "feature_3",
+            "feature_4",
+            "target",
+        ]
         assert set(table.column("target").to_pylist()) == {0, 1, 2}
 
     def test_make_classification_is_reproducible(self) -> None:

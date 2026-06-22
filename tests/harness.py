@@ -116,4 +116,4 @@ def run_aggregate(
     )
     ordered = sorted(states)
     batch = func_cls.finalize(pa.array(ordered, type=pa.int64()), states, None)
-    return dict(zip(ordered, batch.column("result").to_pylist()))
+    return dict(zip(ordered, batch.column("result").to_pylist(), strict=False))

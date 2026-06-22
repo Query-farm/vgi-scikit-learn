@@ -1,0 +1,87 @@
+[project]
+name = "vgi-sklearn"
+version = "0.1.0"
+description = "A VGI (Vector Gateway Interface) worker exposing scikit-learn datasets, metrics, transforms, and a train/predict model registry to DuckDB/SQL"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Rusty Conover", email = "rusty@query.farm" }]
+maintainers = [{ name = "Query Farm LLC", email = "hello@query.farm" }]
+keywords = ["vgi", "duckdb", "arrow", "scikit-learn", "machine-learning", "sql"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Database :: Database Engines/Servers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Operating System :: OS Independent",
+]
+requires-python = ">=3.13"
+dependencies = [
+    "vgi-python[http]>=0.8.1",
+    "scikit-learn>=1.5",
+    "numpy",
+    "joblib",
+]
+
+# Console scripts. `vgi-sklearn` runs the stdio transport (DuckDB spawns it);
+# `vgi-sklearn-http` runs the HTTP server. Once installed you can launch either
+# directly, e.g. `uvx vgi-sklearn`.
+[project.scripts]
+vgi-sklearn = "sklearn_worker:main"
+vgi-sklearn-http = "serve:main"
+
+[project.urls]
+Homepage = "https://query.farm"
+Repository = "https://github.com/Query-farm/vgi-scikit-learn"
+Issues = "https://github.com/Query-farm/vgi-scikit-learn/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# The worker is the `vgi_sklearn` package plus two top-level entry modules.
+[tool.hatch.build.targets.wheel]
+packages = ["vgi_sklearn"]
+include = ["sklearn_worker.py", "serve.py"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "vgi_sklearn/",
+    "sklearn_worker.py",
+    "serve.py",
+    "conftest.py",
+    "tests/",
+    "test/",
+    "README.md",
+    "CLAUDE.md",
+    "LICENSE",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pyarrow",
+    "ruff",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "E741",  # ambiguous variable name (x, y are conventional in ML)
+    "B008",  # function call in argument default (Arg(...) defaults are intentional)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]

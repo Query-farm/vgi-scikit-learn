@@ -134,10 +134,7 @@ def build_estimator(name: str, params: dict[str, Any]) -> tuple[str, Any]:
 def _xy(table: pa.Table, feature_names: list[str], target: str, task: str) -> tuple[np.ndarray, np.ndarray]:
     x = matrix(table, feature_names)
     y = np.asarray(table.column(target).to_numpy(zero_copy_only=False))
-    if task == CLASSIFICATION:
-        y = np.rint(y.astype(float)).astype(int)
-    else:
-        y = y.astype(float)
+    y = np.rint(y.astype(float)).astype(int) if task == CLASSIFICATION else y.astype(float)
     return x, y
 
 
@@ -180,7 +177,9 @@ _FIT_SCHEMA = pa.schema(
         sfield("n_classes", pa.int64(), "Number of classes (NULL for regression)."),
         sfield("train_score", pa.float64(), "In-sample score (accuracy or R^2)."),
         sfield("features", pa.list_(pa.string()), "Ordered feature column names.", nullable=False),
-        sfield("model", pa.binary(), "The fitted model as a self-contained BLOB (estimator + metadata).", nullable=False),
+        sfield(
+            "model", pa.binary(), "The fitted model as a self-contained BLOB (estimator + metadata).", nullable=False
+        ),
     ]
 )
 
@@ -279,9 +278,7 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
         input_schema = params.bind_call.input_schema
         assert input_schema is not None
         if a.target not in input_schema.names:
-            raise ValueError(
-                f"target column {a.target!r} not found in input; columns: {', '.join(input_schema.names)}"
-            )
+            raise ValueError(f"target column {a.target!r} not found in input; columns: {', '.join(input_schema.names)}")
         return BindResponse(output_schema=_FIT_SCHEMA)
 
     @classmethod
@@ -326,10 +323,16 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
 @dataclass(slots=True, frozen=True)
 class PredictArgs:
     data: Annotated[TableInput, Arg(0, doc="Table to score (must contain the model's feature columns).")]
-    model_name: Annotated[str, Arg("model_name", default="", doc="Name of a model in the registry. Provide this OR model.")]
-    model: Annotated[bytes, Arg("model", default=b"", doc="A model BLOB (as returned by fit). Provide this OR model_name.")]
+    model_name: Annotated[
+        str, Arg("model_name", default="", doc="Name of a model in the registry. Provide this OR model.")
+    ]
+    model: Annotated[
+        bytes, Arg("model", default=b"", doc="A model BLOB (as returned by fit). Provide this OR model_name.")
+    ]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to carry through.")]
-    with_proba: Annotated[bool, Arg("with_proba", default=False, doc="Also emit per-class probabilities (classifiers).")]
+    with_proba: Annotated[
+        bool, Arg("with_proba", default=False, doc="Also emit per-class probabilities (classifiers).")
+    ]
 
 
 # Loaded estimators cached per query execution to avoid reloading each batch.
@@ -347,7 +350,10 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
         categories = ["models", "supervised", "inference"]
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.predict((SELECT * FROM sklearn.iris()), model_name => 'iris_rf', id => 'sample_id')",
+                sql=(
+                    "SELECT * FROM sklearn.predict((SELECT * FROM sklearn.iris()), "
+                    "model_name := 'iris_rf', id := 'sample_id')"
+                ),
                 description="Predict with the stored 'iris_rf' model",
             )
         ]
@@ -484,9 +490,7 @@ class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
         input_schema = params.bind_call.input_schema
         assert input_schema is not None
         if a.target not in input_schema.names:
-            raise ValueError(
-                f"target column {a.target!r} not found in input; columns: {', '.join(input_schema.names)}"
-            )
+            raise ValueError(f"target column {a.target!r} not found in input; columns: {', '.join(input_schema.names)}")
         fields: list[pa.Field] = []
         if a.id:
             fields.append(input_schema.field(a.id))
@@ -517,7 +521,9 @@ class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
 
         table = cls.buffered_table(params, input_schema)
         if table is None or table.num_rows == 0:
-            out.emit(pa.RecordBatch.from_pydict({n: [] for n in params.output_schema.names}, schema=params.output_schema))
+            out.emit(
+                pa.RecordBatch.from_pydict({n: [] for n in params.output_schema.names}, schema=params.output_schema)
+            )
             return
 
         x, y = _xy(table, feats, a.target, task)

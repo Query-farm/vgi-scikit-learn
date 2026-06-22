@@ -48,7 +48,9 @@ def _feature_labels(bunch: Any, n_features: int) -> list[str]:
 
 def _feature_fields(labels: list[str]) -> list[pa.Field]:
     cols = dedupe_names([snake_case(label) for label in labels])
-    return [field(col, pa.float64(), f"Feature: {label}.", nullable=False) for col, label in zip(cols, labels)]
+    return [
+        field(col, pa.float64(), f"Feature: {label}.", nullable=False) for col, label in zip(cols, labels, strict=False)
+    ]
 
 
 def _classification_schema(labels: list[str], target_names: list[str]) -> pa.Schema:
@@ -257,7 +259,9 @@ class CaliforniaHousingFunction(TableFunctionGenerator[NoArgs]):
     @classmethod
     def process(cls, params: ProcessParams[NoArgs], state: None, out: OutputCollector) -> None:
         bunch = skd.fetch_california_housing()
-        _emit_matrix(bunch.data, {"target": [float(t) for t in bunch.target]}, cls.FIXED_SCHEMA, out, params.output_schema)
+        _emit_matrix(
+            bunch.data, {"target": [float(t) for t in bunch.target]}, cls.FIXED_SCHEMA, out, params.output_schema
+        )
 
 
 @init_single_worker
@@ -310,9 +314,7 @@ class MakeClassificationFunction(TableFunctionGenerator[MakeClassificationArgs])
     @classmethod
     def on_bind(cls, params: BindParams[MakeClassificationArgs]) -> BindResponse:
         return BindResponse(
-            output_schema=_synthetic_schema(
-                params.args.n_features, "target", pa.int32(), "Integer class label."
-            )
+            output_schema=_synthetic_schema(params.args.n_features, "target", pa.int32(), "Integer class label.")
         )
 
     @classmethod
@@ -454,9 +456,7 @@ class _TwoFeatureShape(TableFunctionGenerator[TwoFeatureArgs]):
 
     @classmethod
     def on_bind(cls, params: BindParams[TwoFeatureArgs]) -> BindResponse:
-        return BindResponse(
-            output_schema=_synthetic_schema(2, "target", pa.int32(), "Binary class label (0 or 1).")
-        )
+        return BindResponse(output_schema=_synthetic_schema(2, "target", pa.int32(), "Binary class label (0 or 1)."))
 
     @classmethod
     def cardinality(cls, params: BindParams[TwoFeatureArgs]) -> TableCardinality:

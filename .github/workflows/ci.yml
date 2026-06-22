@@ -1,0 +1,101 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+#
+# Unit tests + the sqllogictest extension suite (test/sql/*.test) run against
+# the scikit-learn worker through the real signed `vgi` DuckDB community
+# extension via a prebuilt standalone `haybarn-unittest`. Both jobs run on
+# Linux, macOS, and Windows. See ci/README.md for the design.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Resolve the latest published haybarn release once, so the whole matrix tests
+  # the same version (and we never hardcode/pin it).
+  resolve-haybarn:
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.r.outputs.release }}
+    steps:
+      - id: r
+        run: |
+          REL=$(gh release view --repo Query-farm-haybarn/haybarn --json tagName --jq .tagName)
+          echo "release=$REL" >> "$GITHUB_OUTPUT"
+          echo "Latest haybarn release: $REL"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - name: Run unit tests
+        run: uv run --frozen --python 3.13 pytest tests/ -q
+
+  integration:
+    needs: resolve-haybarn
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  asset: haybarn_unittest-linux-amd64.zip }
+          - { os: macos-latest,   asset: haybarn_unittest-osx-arm64.zip }
+          - { os: windows-latest, asset: haybarn_unittest-windows-amd64.zip }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # Git Bash on Windows; the integration runner is a bash script.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install the worker (from the lockfile)
+        run: uv sync --frozen --python 3.13
+
+      - name: Download haybarn-unittest
+        run: |
+          gh release download "$HAYBARN_RELEASE" \
+            --repo Query-farm-haybarn/haybarn \
+            --pattern '${{ matrix.asset }}' \
+            --output haybarn-unittest.zip --clobber
+          mkdir -p hb && unzip -o -q haybarn-unittest.zip -d hb
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAYBARN_RELEASE: ${{ needs.resolve-haybarn.outputs.release }}
+
+      - name: Resolve runner + worker paths
+        run: |
+          # Absolute paths: run-integration.sh cd's into a staging dir before
+          # invoking the runner, so relative paths would not resolve. The worker
+          # LOCATION is consumed by the (native) extension process, so on Windows
+          # it must be a native path to the .exe launcher.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            UNITTEST="$PWD/$(find hb -name 'haybarn-unittest.exe' -type f | head -1)"
+            WORKER=$(cygpath -w "$PWD/.venv/Scripts/vgi-sklearn.exe")
+          else
+            UNITTEST="$PWD/$(find hb -name 'haybarn-unittest' -type f | head -1)"
+            chmod +x "$UNITTEST"
+            WORKER="$PWD/.venv/bin/vgi-sklearn"
+          fi
+          echo "HAYBARN_UNITTEST=$UNITTEST" >> "$GITHUB_ENV"
+          echo "VGI_SKLEARN_WORKER=$WORKER" >> "$GITHUB_ENV"
+
+      - name: Run extension integration suite
+        run: ci/run-integration.sh

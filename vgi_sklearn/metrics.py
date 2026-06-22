@@ -17,7 +17,7 @@ Rows where either value is NULL are skipped.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Annotated, Any
+from typing import Annotated
 
 import numpy as np
 import pyarrow as pa
@@ -63,7 +63,7 @@ class _BufferedMetric(AggregateFunction[PairState]):
         # framework persists state by re-reading the dict entry, matching the
         # reassignment idiom of the shipped aggregate examples).
         batch: dict[int, tuple[list[float], list[float]]] = {}
-        for g, t, p in zip(group_ids.to_pylist(), y_true.to_pylist(), y_pred.to_pylist()):
+        for g, t, p in zip(group_ids.to_pylist(), y_true.to_pylist(), y_pred.to_pylist(), strict=False):
             if t is None or p is None:
                 continue
             bt, bp = batch.setdefault(g, ([], []))

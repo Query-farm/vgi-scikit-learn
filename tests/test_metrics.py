@@ -41,9 +41,7 @@ def _approx(x: float) -> pytest.approx:
 
 class TestRegression:
     def test_mse(self) -> None:
-        assert run_aggregate(MeanSquaredError, _YT_REG, _YP_REG)[0] == _approx(
-            skm.mean_squared_error(_YT_REG, _YP_REG)
-        )
+        assert run_aggregate(MeanSquaredError, _YT_REG, _YP_REG)[0] == _approx(skm.mean_squared_error(_YT_REG, _YP_REG))
 
     def test_rmse(self) -> None:
         assert run_aggregate(RootMeanSquaredError, _YT_REG, _YP_REG)[0] == _approx(
@@ -61,9 +59,7 @@ class TestRegression:
 
 class TestClassification:
     def test_accuracy(self) -> None:
-        assert run_aggregate(AccuracyScore, _YT_CLS, _YP_CLS)[0] == _approx(
-            skm.accuracy_score(_YT_CLS, _YP_CLS)
-        )
+        assert run_aggregate(AccuracyScore, _YT_CLS, _YP_CLS)[0] == _approx(skm.accuracy_score(_YT_CLS, _YP_CLS))
 
     def test_f1_macro(self) -> None:
         assert run_aggregate(F1Score, _YT_CLS, _YP_CLS)[0] == _approx(
@@ -73,9 +69,7 @@ class TestClassification:
 
 class TestProbability:
     def test_roc_auc(self) -> None:
-        assert run_aggregate(RocAucScore, _YT_BIN, _YSCORE)[0] == _approx(
-            skm.roc_auc_score(_YT_BIN, _YSCORE)
-        )
+        assert run_aggregate(RocAucScore, _YT_BIN, _YSCORE)[0] == _approx(skm.roc_auc_score(_YT_BIN, _YSCORE))
 
     def test_log_loss_runs(self) -> None:
         val = run_aggregate(LogLoss, _YT_BIN, _YSCORE)[0]
@@ -89,9 +83,7 @@ class TestClustering:
         )
 
     def test_v_measure(self) -> None:
-        assert run_aggregate(VMeasureScore, _YT_CLS, _YP_CLS)[0] == _approx(
-            skm.v_measure_score(_YT_CLS, _YP_CLS)
-        )
+        assert run_aggregate(VMeasureScore, _YT_CLS, _YP_CLS)[0] == _approx(skm.v_measure_score(_YT_CLS, _YP_CLS))
 
 
 class TestGroupingAndNulls:

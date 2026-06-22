@@ -19,7 +19,8 @@ common, scalar ones — see ``_HPARAMS`` below.
 from __future__ import annotations
 
 import types
-from dataclasses import dataclass, field as dc_field, make_dataclass
+from dataclasses import dataclass, make_dataclass
+from dataclasses import field as dc_field
 from typing import Annotated, Any
 
 from vgi.arguments import Arg, TableInput
@@ -154,10 +155,17 @@ def _make_args_class(est_name: str, spec: list[_HP]) -> type:
         ("data", Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]),
         (
             "model_name",
-            Annotated[str, Arg("model_name", default="", doc="Optional registry name; the model is always returned as a BLOB.")],
+            Annotated[
+                str,
+                Arg("model_name", default="", doc="Optional registry name; the model is always returned as a BLOB."),
+            ],
             dc_field(default=""),
         ),
-        ("target", Annotated[str, Arg("target", default="", doc="Label column name (required).")], dc_field(default="")),
+        (
+            "target",
+            Annotated[str, Arg("target", default="", doc="Label column name (required).")],
+            dc_field(default=""),
+        ),
         ("id", Annotated[str, Arg("id", default="", doc="Optional id passthrough column.")], dc_field(default="")),
     ]
     for hp in spec:
@@ -184,9 +192,7 @@ def _make_fit_function(est_name: str) -> type:
         input_schema = params.bind_call.input_schema
         assert input_schema is not None
         if a.target not in input_schema.names:
-            raise ValueError(
-                f"target column {a.target!r} not found in input; columns: {', '.join(input_schema.names)}"
-            )
+            raise ValueError(f"target column {a.target!r} not found in input; columns: {', '.join(input_schema.names)}")
         return BindResponse(output_schema=_FIT_SCHEMA)
 
     def initial_finalize_state(cls: type, finalize_state_id: bytes, params: TableBufferingParams[Any]) -> DrainState:
@@ -232,9 +238,7 @@ def _make_fit_function(est_name: str) -> type:
                 FunctionExample(
                     sql=(
                         f"SELECT * FROM sklearn.{fn_name}((SELECT * FROM training), "
-                        f"model_name := 'm', target := 'y'"
-                        + (f", {param_hint}" if param_hint else "")
-                        + ")"
+                        f"model_name := 'm', target := 'y'" + (f", {param_hint}" if param_hint else "") + ")"
                     ),
                     description=f"Train a {est_name} with named hyperparameters",
                 )
@@ -249,9 +253,7 @@ def _make_fit_function(est_name: str) -> type:
         "finalize": classmethod(finalize),
     }
     cls_name = "Fit" + "".join(p.title() for p in est_name.split("_"))
-    return types.new_class(
-        cls_name, (SinkBuffer[args_cls, DrainState],), {}, lambda ns: ns.update(namespace)
-    )
+    return types.new_class(cls_name, (SinkBuffer[args_cls, DrainState],), {}, lambda ns: ns.update(namespace))
 
 
 TYPED_FIT_FUNCTIONS: list[type] = [_make_fit_function(name) for name in _HPARAMS]

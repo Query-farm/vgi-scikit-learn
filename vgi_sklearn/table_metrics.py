@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from typing import Annotated, Any, ClassVar
+from typing import Annotated, ClassVar
 
 import numpy as np
 import pyarrow as pa
@@ -53,7 +53,10 @@ class ConfusionMatrix(SinkBuffer[ConfusionMatrixArgs, DrainState]):
         categories = ["metrics", "classification"]
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.confusion_matrix((SELECT y, yhat FROM preds), actual => 'y', predicted => 'yhat')",
+                sql=(
+                    "SELECT * FROM sklearn.confusion_matrix((SELECT y, yhat FROM preds), "
+                    "actual := 'y', predicted := 'yhat')"
+                ),
                 description="Long-format confusion matrix",
             )
         ]
@@ -63,7 +66,9 @@ class ConfusionMatrix(SinkBuffer[ConfusionMatrixArgs, DrainState]):
         return BindResponse(output_schema=_CONFUSION_SCHEMA)
 
     @classmethod
-    def initial_finalize_state(cls, finalize_state_id: bytes, params: TableBufferingParams[ConfusionMatrixArgs]) -> DrainState:
+    def initial_finalize_state(
+        cls, finalize_state_id: bytes, params: TableBufferingParams[ConfusionMatrixArgs]
+    ) -> DrainState:
         return DrainState()
 
     @classmethod
@@ -82,12 +87,14 @@ class ConfusionMatrix(SinkBuffer[ConfusionMatrixArgs, DrainState]):
         a = params.args
         table = cls.buffered_table(params, input_schema_of(params))
         if table is None:
-            out.emit(pa.RecordBatch.from_pydict({"actual": [], "predicted": [], "count": []}, schema=params.output_schema))
+            out.emit(
+                pa.RecordBatch.from_pydict({"actual": [], "predicted": [], "count": []}, schema=params.output_schema)
+            )
             return
 
         yt = np.rint(np.asarray(table.column(a.actual).to_numpy(zero_copy_only=False), dtype=float)).astype(int)
         yp = np.rint(np.asarray(table.column(a.predicted).to_numpy(zero_copy_only=False), dtype=float)).astype(int)
-        counts = Counter(zip(yt.tolist(), yp.tolist()))
+        counts = Counter(zip(yt.tolist(), yp.tolist(), strict=False))
         rows = sorted(counts.items())
         out.emit(
             pa.RecordBatch.from_pydict(
@@ -132,7 +139,9 @@ class SilhouetteScore(SinkBuffer[SilhouetteArgs, DrainState]):
         return BindResponse(output_schema=_SILHOUETTE_SCHEMA)
 
     @classmethod
-    def initial_finalize_state(cls, finalize_state_id: bytes, params: TableBufferingParams[SilhouetteArgs]) -> DrainState:
+    def initial_finalize_state(
+        cls, finalize_state_id: bytes, params: TableBufferingParams[SilhouetteArgs]
+    ) -> DrainState:
         return DrainState()
 
     @classmethod

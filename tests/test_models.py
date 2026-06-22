@@ -115,8 +115,13 @@ class TestModelBlob:
         x = np.array([[0.0], [1.0], [0.0], [1.0]])
         est = LogisticRegression().fit(x, np.array([0, 1, 0, 1]))
         meta = ModelMetadata(
-            name="b", estimator="logistic_regression", task="classification", target="y",
-            feature_names=["a"], classes=[0, 1], n_features=1,
+            name="b",
+            estimator="logistic_regression",
+            task="classification",
+            target="y",
+            feature_names=["a"],
+            classes=[0, 1],
+            n_features=1,
         )
         blob = pack_model(est, meta)
         # metadata-only read is cheap and correct
@@ -149,13 +154,15 @@ class TestTypedFitSpec:
         from types import SimpleNamespace
 
         # max_depth 0 -> None; mlp hidden_units -> hidden_layer_sizes tuple
-        rf = _estimator_kwargs(_HPARAMS["random_forest_classifier"],
-                               SimpleNamespace(n_estimators=10, max_depth=0, min_samples_split=2,
-                                               max_features="sqrt", random_state=0))
+        rf = _estimator_kwargs(
+            _HPARAMS["random_forest_classifier"],
+            SimpleNamespace(n_estimators=10, max_depth=0, min_samples_split=2, max_features="sqrt", random_state=0),
+        )
         assert rf["max_depth"] is None and rf["n_estimators"] == 10
-        mlp = _estimator_kwargs(_HPARAMS["mlp_classifier"],
-                                SimpleNamespace(hidden_units=20, alpha=0.0001, max_iter=50,
-                                                learning_rate_init=0.001, random_state=0))
+        mlp = _estimator_kwargs(
+            _HPARAMS["mlp_classifier"],
+            SimpleNamespace(hidden_units=20, alpha=0.0001, max_iter=50, learning_rate_init=0.001, random_state=0),
+        )
         assert mlp["hidden_layer_sizes"] == (20,)
 
 

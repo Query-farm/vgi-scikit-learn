@@ -63,6 +63,9 @@ arg, while `fit_<estimator>` exposes them as typed named args.
   mlp `hidden_units` maps to `hidden_layer_sizes=(n,)`.
 - **predict aligns features by name** (reorder-safe, extra columns ignored);
   missing/non-numeric feature columns raise clear errors at bind.
+- **Security:** loading a model unpickles joblib data → arbitrary code
+  execution. Only load trusted BLOBs/registry entries; restrict write access to
+  `SKLEARN_MODELS_DIR`. Documented in the README security callout.
 
 ## Sharp edges (learned the hard way — read before debugging)
 

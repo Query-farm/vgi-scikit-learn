@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from collections import Counter
 
-import numpy as np
 from sklearn import metrics as skm
 from sklearn.datasets import make_blobs
 
@@ -15,7 +14,7 @@ from sklearn.datasets import make_blobs
 def test_confusion_counts_match_sklearn() -> None:
     yt = [0, 0, 1, 1, 2, 2, 0, 1]
     yp = [0, 1, 1, 1, 2, 0, 0, 2]
-    counts = Counter(zip(yt, yp))
+    counts = Counter(zip(yt, yp, strict=False))
     cm = skm.confusion_matrix(yt, yp)
     for (a, p), c in counts.items():
         assert cm[a, p] == c
