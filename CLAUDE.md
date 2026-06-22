@@ -22,6 +22,7 @@ vgi_sklearn/
   transforms.py       unsupervised fit_transform (buffering)
   models.py           generic fit / predict / cross_val_predict + registry mgmt
   typed_models.py     generated fit_<estimator> functions with typed hyperparams
+  search.py           grid_search — discriminated-union (sparse) hyperparameter search
   registry.py         ModelStore + LocalDiskStore (S3/R2 seam) + model-BLOB pack/unpack
   buffering.py        shared sink/combine/serialize/matrix helpers (numeric validation)
   schema_utils.py     pa.Field comment helper, name sanitisation, NoArgs
@@ -74,6 +75,22 @@ arg, while `fit_<estimator>` exposes them as typed named args.
   mlp `hidden_units` maps to `hidden_layer_sizes=(n,)`.
 - **predict aligns features by name** (reorder-safe, extra columns ignored);
   missing/non-numeric feature columns raise clear errors at bind.
+- **`grid_search` (search.py) is a discriminated union.** The `estimator` arg is
+  a sparse Arrow union (`_GRID_UNION`, one member per estimator built from
+  `_HPARAMS`, each field a `list<scalar>`); SQL calls it as
+  `union_value(<estimator> := {param: [values]})`. The worker reads it as a
+  `vgi.TaggedUnion` (`.tag` = estimator, `.value` = grid dict); omitted (NULL)
+  hyperparameters stay at defaults. Returns the CV leaderboard (one row per
+  combo) with the refit best model BLOB on the single `best_index_` row — grab
+  it with `WHERE model IS NOT NULL` (rank 1 can tie). **Dependency/gating:** this
+  needs a vgi-python whose argument decoder preserves union tags (`TaggedUnion`,
+  > 0.8.2). `worker.py` imports `search` under try/except so older vgi-python
+  just omits `grid_search`; the SQL test is gated `require-env
+  VGI_SKLEARN_GRID_SEARCH` (set only in `make test-stdio`, which runs the local
+  checkout) and `tests/test_search.py` skips when `TaggedUnion` is absent — so CI
+  on the released PyPI vgi-python stays green. When a vgi-python with the fix is
+  released, bump the pin and drop the gating. (Dense unions are still unsupported
+  by the C++ extension; `union_value` produces sparse, which works.)
 - **Serialization is skops, not pickle** (`registry._skops_dumps/_skops_loads`,
   `.skops` files + skops BLOBs). Loading reconstructs only known types and we
   restrict trust to the `sklearn`/`numpy`/`scipy` namespaces (`_TRUSTED_PREFIXES`)

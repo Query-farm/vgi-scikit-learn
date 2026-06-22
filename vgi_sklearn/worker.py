@@ -30,6 +30,14 @@ from vgi_sklearn.table_metrics import TABLE_METRIC_FUNCTIONS
 from vgi_sklearn.transforms import TRANSFORM_FUNCTIONS
 from vgi_sklearn.typed_models import TYPED_FIT_FUNCTIONS
 
+try:
+    # grid_search needs union-typed arguments with tag preservation, added in a
+    # newer vgi-python. Against an older vgi-python the import fails and the
+    # function is simply not registered (everything else still works).
+    from vgi_sklearn.search import SEARCH_FUNCTIONS
+except ImportError:  # pragma: no cover - depends on the installed vgi-python
+    SEARCH_FUNCTIONS = []
+
 log = logging.getLogger(__name__)
 
 DATA_VERSION = __version__
@@ -43,6 +51,7 @@ _FUNCTIONS: list[type] = [
     *TRANSFORM_FUNCTIONS,
     *MODEL_FUNCTIONS,
     *TYPED_FIT_FUNCTIONS,
+    *SEARCH_FUNCTIONS,
 ]
 
 _SKLEARN_CATALOG = Catalog(

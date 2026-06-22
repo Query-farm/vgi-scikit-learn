@@ -169,6 +169,45 @@ FROM sklearn.cross_val_predict(
 JOIN churn c ON c.customer_id = p.customer_id;
 ```
 
+### Tune hyperparameters (grid search)
+
+`grid_search` cross-validates every combination of the hyperparameters you list
+and returns the leaderboard. The estimator and its grid are one **tagged-union**
+argument — `union_value(<estimator> := {param: [values], …})` — so you only ever
+see the hyperparameters that estimator actually has:
+
+```sql
+SELECT params, round(mean_test_score, 3) AS score, rank
+FROM sklearn.grid_search(
+  (SELECT tenure, monthly_spend, support_tickets, churned FROM churn),
+  target := 'churned',
+  estimator := union_value(gradient_boosting_classifier := {
+    'n_estimators': [100, 300],
+    'max_depth':    [2, 3],
+    'learning_rate':[0.05, 0.1]}))
+ORDER BY rank;
+```
+
+Only the hyperparameters you list are searched; the rest stay at their defaults.
+The refit best model is attached as a `model` BLOB on the single best row — grab
+it with `WHERE model IS NOT NULL`, or pass `model_name :=` to also store it:
+
+```sql
+CREATE TABLE best AS
+SELECT model FROM sklearn.grid_search(
+  (SELECT tenure, monthly_spend, support_tickets, churned FROM churn),
+  target := 'churned',
+  estimator := union_value(svc := {'C': [0.1, 1, 10], 'kernel': ['rbf', 'linear']}))
+WHERE model IS NOT NULL;
+
+SET VARIABLE m = (SELECT model FROM best);
+SELECT * FROM sklearn.predict((SELECT * FROM new_customers), model := getvariable('m'), id := 'customer_id');
+```
+
+> `grid_search` uses union-typed arguments and needs a vgi-python with
+> union-tag-preserving decoding (newer than 0.8.2). Against an older vgi-python
+> the function is simply not registered.
+
 ### Score predictions you already have
 
 The metric functions are plain aggregates over two columns — point them at any
@@ -244,8 +283,8 @@ SELECT * FROM sklearn.make_blobs(n_samples := 300, centers := 4);   -- synthetic
 `make_blobs`, `make_moons`, `make_circles`.
 
 **Models:** `fit_<estimator>` (typed, see the table above), generic `fit`
-(escape hatch with JSON `params`), `predict`, `cross_val_predict`,
-`list_models`, `model_info`, `drop_model`.
+(escape hatch with JSON `params`), `predict`, `cross_val_predict`, `grid_search`
+(union-typed hyperparameter search), `list_models`, `model_info`, `drop_model`.
 
 **Transforms** (table in, `id` passthrough): `standard_scaler`, `minmax_scaler`,
 `robust_scaler`, `normalizer`, `simple_imputer`, `pca`, `truncated_svd`,
@@ -376,6 +415,7 @@ vgi_sklearn/
   transforms.py        unsupervised fit_transform (buffering)
   models.py            generic fit / predict / cross_val_predict / registry mgmt
   typed_models.py      generated fit_<estimator> functions (typed hyperparameters)
+  search.py            grid_search (discriminated-union hyperparameter search)
   registry.py          ModelStore (local disk; S3/R2 seam) + model-BLOB pack/unpack
   buffering.py         shared sink/combine/matrix helpers
   schema_utils.py      Arrow schema helpers

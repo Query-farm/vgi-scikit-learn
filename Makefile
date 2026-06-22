@@ -62,7 +62,12 @@ test: pytest test-stdio test-http
 
 test-stdio:
 	rm -rf "$(TEST_MODELS_DIR)"
-	SKLEARN_MODELS_DIR="$(TEST_MODELS_DIR)" VGI_SKLEARN_WORKER="$(WORKER_STDIO)" \
+	# WORKER_STDIO runs against the local vgi-python checkout (PEP 723 sources),
+	# which has union-tag support, so the grid_search suite is enabled here.
+	# Rebuild the local vgi-python in the script env first so uv doesn't reuse a
+	# stale cached build (same version, changed source) that predates the fix.
+	uv run --reinstall-package vgi-python --python 3.13 sklearn_worker.py --help >/dev/null 2>&1 || true
+	SKLEARN_MODELS_DIR="$(TEST_MODELS_DIR)" VGI_SKLEARN_WORKER="$(WORKER_STDIO)" VGI_SKLEARN_GRID_SEARCH=1 \
 		$(TEST_RUNNER) --test-dir "$(TEST_DIR)" "$(TEST_PATTERN)"
 
 test-http:
