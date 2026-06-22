@@ -96,12 +96,30 @@ def _parse_params(params: str) -> dict[str, Any]:
     return parsed
 
 
+def estimator_param_names(name: str) -> list[str]:
+    """Sorted list of hyperparameters accepted by an estimator (for discovery/errors)."""
+    _task, cls, _defaults = _ESTIMATORS[name]
+    return sorted(cls().get_params().keys())
+
+
 def build_estimator(name: str, params: dict[str, Any]) -> tuple[str, Any]:
     """Return ``(task, estimator)`` for a registered estimator name + hyperparams."""
     if name not in _ESTIMATORS:
         raise ValueError(f"unknown estimator {name!r}; choose one of: {', '.join(sorted(_ESTIMATORS))}")
     task, cls, defaults = _ESTIMATORS[name]
-    return task, cls(**{**defaults, **params})
+    # Reject unknown hyperparameters up front with the valid set, rather than
+    # surfacing sklearn's opaque "unexpected keyword argument" TypeError.
+    valid = set(cls().get_params().keys())
+    unknown = [k for k in params if k not in valid]
+    if unknown:
+        raise ValueError(
+            f"unknown hyperparameter(s) for {name!r}: {', '.join(sorted(unknown))}. "
+            f"valid params: {', '.join(sorted(valid))}"
+        )
+    try:
+        return task, cls(**{**defaults, **params})
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid hyperparameters for {name!r}: {exc}") from exc
 
 
 def _xy(table: pa.Table, feature_names: list[str], target: str, task: str) -> tuple[np.ndarray, np.ndarray]:
@@ -130,12 +148,15 @@ def _prediction_field(task: str) -> pa.Field:
 # ===========================================================================
 
 
+# Required string args carry a "" default so an omitted value reaches on_bind as
+# "" and we can raise a friendly error, instead of the framework's raw KeyError
+# during argument parsing.
 @dataclass(slots=True, frozen=True)
 class FitArgs:
     data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
-    model_name: Annotated[str, Arg("model_name", doc="Name to store the fitted model under.")]
+    model_name: Annotated[str, Arg("model_name", default="", doc="Name to store the fitted model under (required).")]
     estimator: Annotated[str, Arg("estimator", default="random_forest_classifier", doc="Estimator name.")]
-    target: Annotated[str, Arg("target", doc="Name of the target/label column.")]
+    target: Annotated[str, Arg("target", default="", doc="Name of the target/label column (required).")]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to exclude from features.")]
     params: Annotated[str, Arg("params", default="", doc="JSON object of hyperparameters.")]
 
@@ -175,9 +196,20 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[FitArgs]) -> BindResponse:
-        validate_name(params.args.model_name)
-        if not params.args.target:
-            raise ValueError("fit requires a 'target' column name")
+        a = params.args
+        if not a.model_name:
+            raise ValueError("fit requires 'model_name' (e.g. model_name := 'my_model')")
+        validate_name(a.model_name)
+        if not a.target:
+            raise ValueError("fit requires 'target' (the label column name, e.g. target := 'label')")
+        # Validate estimator + hyperparameters now so errors surface at bind.
+        build_estimator(a.estimator, _parse_params(a.params))
+        input_schema = params.bind_call.input_schema
+        assert input_schema is not None
+        if a.target not in input_schema.names:
+            raise ValueError(
+                f"target column {a.target!r} not found in input; columns: {', '.join(input_schema.names)}"
+            )
         return BindResponse(output_schema=_FIT_SCHEMA)
 
     @classmethod
@@ -252,7 +284,7 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
 @dataclass(slots=True, frozen=True)
 class PredictArgs:
     data: Annotated[TableInput, Arg(0, doc="Table to score (must contain the model's feature columns).")]
-    model_name: Annotated[str, Arg("model_name", doc="Name of a stored model.")]
+    model_name: Annotated[str, Arg("model_name", default="", doc="Name of a stored model (required).")]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to carry through.")]
     with_proba: Annotated[bool, Arg("with_proba", default=False, doc="Also emit per-class probabilities (classifiers).")]
 
@@ -284,12 +316,25 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
     @classmethod
     def on_bind(cls, params: BindParams[PredictArgs]) -> BindResponse:
         a = params.args
+        if not a.model_name:
+            raise ValueError("predict requires 'model_name' (e.g. model_name := 'my_model')")
         input_schema = params.bind_call.input_schema
         assert input_schema is not None
         try:
             meta = get_store().load_meta(a.model_name)
         except ModelNotFoundError as exc:
             raise ValueError(f"model {a.model_name!r} not found in the registry") from exc
+
+        # Fail fast at bind if the input is missing any feature the model needs.
+        # (predict selects features by name, so order doesn't matter and extra
+        # columns are ignored — only missing ones are an error.)
+        missing = [f for f in meta.feature_names if f not in input_schema.names]
+        if missing:
+            raise ValueError(
+                f"model {a.model_name!r} requires feature column(s) {', '.join(missing)} "
+                f"not present in the input; model features: {', '.join(meta.feature_names)}; "
+                f"input columns: {', '.join(input_schema.names)}"
+            )
 
         fields: list[pa.Field] = []
         if a.id:
@@ -359,7 +404,7 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
 class CrossValArgs:
     data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
     estimator: Annotated[str, Arg("estimator", default="random_forest_classifier", doc="Estimator name.")]
-    target: Annotated[str, Arg("target", doc="Name of the target/label column.")]
+    target: Annotated[str, Arg("target", default="", doc="Name of the target/label column (required).")]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to carry through.")]
     params: Annotated[str, Arg("params", default="", doc="JSON object of hyperparameters.")]
     cv: Annotated[int, Arg("cv", default=5, doc="Number of cross-validation folds.")]
@@ -387,10 +432,14 @@ class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
     def on_bind(cls, params: BindParams[CrossValArgs]) -> BindResponse:
         a = params.args
         if not a.target:
-            raise ValueError("cross_val_predict requires a 'target' column name")
-        task, _ = build_estimator(a.estimator, {})
+            raise ValueError("cross_val_predict requires 'target' (the label column name, e.g. target := 'label')")
+        task, _ = build_estimator(a.estimator, _parse_params(a.params))
         input_schema = params.bind_call.input_schema
         assert input_schema is not None
+        if a.target not in input_schema.names:
+            raise ValueError(
+                f"target column {a.target!r} not found in input; columns: {', '.join(input_schema.names)}"
+            )
         fields: list[pa.Field] = []
         if a.id:
             fields.append(input_schema.field(a.id))

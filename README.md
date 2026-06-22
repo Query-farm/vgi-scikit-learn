@@ -11,7 +11,7 @@ ATTACH 'sklearn' (TYPE vgi, LOCATION 'uv run sklearn_worker.py');
 
 SELECT * FROM sklearn.iris();
 SELECT sklearn.r2_score(actual, predicted) FROM my_predictions;
-SELECT * FROM sklearn.kmeans((SELECT id, x, y FROM points), id => 'id', n_clusters => 3);
+SELECT * FROM sklearn.kmeans((SELECT id, x, y FROM points), id := 'id', n_clusters := 3);
 ```
 
 ## How it maps scikit-learn onto SQL
@@ -24,18 +24,29 @@ data flow:
 | --- | --- | --- |
 | **Datasets** | `SELECT * FROM sklearn.iris()` | table function (source) |
 | **Metrics** | `sklearn.r2_score(y, yhat)` over `GROUP BY` | aggregate function |
-| **Transforms** | `sklearn.pca((SELECT ...), n_components => 2)` | table-buffering (`fit_transform`) |
-| **Fit** | `sklearn.fit((SELECT ...), model_name => 'm', ...)` | table-buffering → registry |
-| **Predict** | `sklearn.predict((SELECT ...), model_name => 'm')` | streaming table-in-out |
+| **Transforms** | `sklearn.pca((SELECT ...), n_components := 2)` | table-buffering (`fit_transform`) |
+| **Fit** | `sklearn.fit((SELECT ...), model_name := 'm', ...)` | table-buffering → registry |
+| **Predict** | `sklearn.predict((SELECT ...), model_name := 'm')` | streaming table-in-out |
 
 **Conventions** for the transform / fit / predict functions:
 
 - The input relation **is** the feature matrix `X`, passed as a `(SELECT ...)`
-  subquery.
-- Name the `target` column for supervised `fit` / `cross_val_predict`; name an
-  optional `id` column to carry through. **Every other column is treated as a
-  numeric feature** — run a scaler/encoder first if needed.
-- Hyperparameters are passed as a JSON string: `params => '{"n_estimators": 300}'`.
+  subquery. Named arguments use DuckDB's `name := value` syntax.
+- **`id`** names a passthrough column: it is *excluded from the features* and
+  copied unchanged onto each output row, so you can join the result back to the
+  source (e.g. attach a `cluster`/`prediction` to the row it came from). It is
+  optional; omit it if you don't need to line results up with input rows.
+- **`target`** (required for supervised `fit` / `cross_val_predict`) names the
+  label column, also excluded from features.
+- **Every remaining column is treated as a numeric feature.** Non-numeric
+  columns raise a clear error — `SELECT` only the columns you want as features
+  (don't pass `SELECT *` when it includes text/label columns), or scale/encode
+  them first.
+- Hyperparameters are passed as a JSON string: `params := '{"n_estimators": 300}'`.
+  Unknown hyperparameters are rejected with the list of valid ones for that estimator.
+- **`fit`/`predict` align features by name**, not position: `predict` selects
+  the model's fitted feature columns by name (input order is irrelevant, extra
+  columns are ignored) and errors if a required feature column is missing.
 
 ## Function catalog
 
@@ -46,7 +57,7 @@ data flow:
 
 ```sql
 SELECT target_name, avg(petal_length_cm) FROM sklearn.iris() GROUP BY target_name;
-SELECT * FROM sklearn.make_blobs(n_samples => 300, centers => 4);
+SELECT * FROM sklearn.make_blobs(n_samples := 300, centers := 4);
 ```
 
 ### Metrics (aggregates over two columns)
@@ -64,7 +75,7 @@ Table-input metrics: `confusion_matrix` (long format), `silhouette_score`.
 
 ```sql
 SELECT model, sklearn.f1_score(y, yhat) FROM preds GROUP BY model;
-SELECT * FROM sklearn.confusion_matrix((SELECT y, yhat FROM preds), actual => 'y', predicted => 'yhat');
+SELECT * FROM sklearn.confusion_matrix((SELECT y, yhat FROM preds), actual := 'y', predicted := 'yhat');
 ```
 
 ### Transforms (`fit_transform` over the whole input)
@@ -73,8 +84,14 @@ Imputation: `simple_imputer`. Decomposition: `pca`, `truncated_svd`.
 Clustering: `kmeans`, `dbscan`. Outliers: `isolation_forest`.
 
 ```sql
-SELECT * FROM sklearn.pca((SELECT * FROM sklearn.iris()), id => 'sample_id', n_components => 2);
-SELECT * FROM sklearn.isolation_forest((SELECT id, x, y FROM points), id => 'id', contamination => 0.05);
+-- pca: select sample_id (carried through) + the 4 numeric features only;
+-- target / target_name are NOT selected, since they are not features.
+SELECT * FROM sklearn.pca(
+  (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm FROM sklearn.iris()),
+  id := 'sample_id', n_components := 2);
+
+-- points(id, x, y): id is passed through; x and y are the features.
+SELECT * FROM sklearn.isolation_forest((SELECT id, x, y FROM points), id := 'id', contamination := 0.05);
 ```
 
 ### Models (registry-backed)
@@ -91,15 +108,15 @@ Estimators: `logistic_regression`, `random_forest_classifier`/`_regressor`,
 -- train + persist
 SELECT * FROM sklearn.fit(
   (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target FROM sklearn.iris()),
-  model_name => 'iris_rf', estimator => 'random_forest_classifier', target => 'target', id => 'sample_id');
+  model_name := 'iris_rf', estimator := 'random_forest_classifier', target := 'target', id := 'sample_id');
 
 -- predict later (optionally with per-class probabilities)
-SELECT * FROM sklearn.predict((SELECT * FROM new_flowers), model_name => 'iris_rf', id => 'id', with_proba => true);
+SELECT * FROM sklearn.predict((SELECT * FROM new_flowers), model_name := 'iris_rf', id := 'id', with_proba := true);
 
 -- evaluate without persisting
 SELECT sklearn.accuracy_score(i.target, p.prediction)
 FROM sklearn.cross_val_predict(
-       (SELECT * FROM iris_xy), estimator => 'logistic_regression', target => 'target', id => 'sample_id') p
+       (SELECT * FROM iris_xy), estimator := 'logistic_regression', target := 'target', id := 'sample_id') p
 JOIN iris_xy i USING (sample_id);
 
 SELECT * FROM sklearn.list_models();
