@@ -37,6 +37,7 @@ from vgi.table_buffering_function import OutputCollector, TableBufferingParams
 from vgi.table_function import BindParams
 
 from .buffering import DrainState, SinkBuffer, input_schema_of
+from .features import PIPELINE_PARAM_PREFIX, prefix_grid, wrap_estimator
 from .models import _ESTIMATORS, CLASSIFICATION, _features_excluding, _xy
 from .registry import ModelMetadata, get_store, now_iso, pack_model, validate_name
 from .schema_utils import field as sfield
@@ -179,8 +180,12 @@ class GridSearch(SinkBuffer[GridSearchArgs, DrainState]):
         if table is None or table.num_rows == 0:
             raise ValueError("grid_search received no training rows")
 
-        x, y = _xy(table, feats, a.target, task)
-        search = GridSearchCV(est_cls(**defaults), grid, cv=a.cv, scoring=(a.scoring or None), refit=True)
+        x, y, cat_mask = _xy(table, feats, a.target, task)
+        # When features are categorical the estimator becomes a one-hot Pipeline,
+        # so grid keys must address the estimator step (est__<param>).
+        wrapped = any(cat_mask)
+        estimator = wrap_estimator(est_cls(**defaults), cat_mask)
+        search = GridSearchCV(estimator, prefix_grid(grid, wrapped), cv=a.cv, scoring=(a.scoring or None), refit=True)
         search.fit(x, y)
 
         results = search.cv_results_
@@ -194,7 +199,8 @@ class GridSearch(SinkBuffer[GridSearchArgs, DrainState]):
             task=task,
             target=a.target,
             feature_names=feats,
-            params={k: _json_safe(v) for k, v in search.best_params_.items()},
+            categorical=cat_mask,
+            params={k: _json_safe(v) for k, v in _strip_prefix(search.best_params_).items()},
             classes=classes,
             n_samples=int(table.num_rows),
             n_features=len(feats),
@@ -210,7 +216,9 @@ class GridSearch(SinkBuffer[GridSearchArgs, DrainState]):
             pa.RecordBatch.from_pydict(
                 {
                     "estimator": [tag] * n,
-                    "params": [json.dumps({k: _json_safe(v) for k, v in p.items()}) for p in results["params"]],
+                    "params": [
+                        json.dumps({k: _json_safe(v) for k, v in _strip_prefix(p).items()}) for p in results["params"]
+                    ],
                     "mean_test_score": [float(s) for s in results["mean_test_score"]],
                     "std_test_score": [float(s) for s in results["std_test_score"]],
                     "rank": [int(r) for r in results["rank_test_score"]],
@@ -219,6 +227,12 @@ class GridSearch(SinkBuffer[GridSearchArgs, DrainState]):
                 schema=params.output_schema,
             )
         )
+
+
+def _strip_prefix(d: dict[str, Any]) -> dict[str, Any]:
+    """Drop the pipeline ``est__`` prefix from param names for display."""
+    n = len(PIPELINE_PARAM_PREFIX)
+    return {(k[n:] if k.startswith(PIPELINE_PARAM_PREFIX) else k): v for k, v in d.items()}
 
 
 def _json_safe(v: Any) -> Any:

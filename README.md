@@ -51,9 +51,12 @@ Every modeling function follows the same SQL-friendly contract:
   subquery argument, so the data goes there; everything else is a named arg.)
 - **Named arguments use `:=`** — `n_clusters := 3`, `target := 'label'`.
 - **`target`** names your label column (training only). **Every other column you
-  select is a numeric feature** — so for `fit`, just `SELECT` your features and
-  the target; don't include an identifier column (non-numeric columns raise a
-  clear error).
+  select is a feature** — so for `fit`, just `SELECT` your features and the
+  target; don't include an identifier column. Numeric and boolean columns are
+  used as-is; **string columns are treated as categorical and one-hot-encoded
+  automatically** (the encoding is stored with the model, so `predict` re-applies
+  it). Need the encoding as data instead? `ordinal_encoder` / `one_hot_encoder`
+  expose it directly.
 - **`id` is for getting results back, and it's per-row functions that need it.**
   `predict`, the transforms, and `cross_val_predict` emit one row per input row
   and copy your `id` onto each, so a plain `JOIN ... USING (id)` reattaches
@@ -289,6 +292,28 @@ SELECT * FROM sklearn.simple_imputer((SELECT ...), id := 'id', strategy := 'medi
 Transforms compose — pipe one into the next as nested subqueries (scale, then
 cluster).
 
+### Encode categorical (string) columns
+
+`fit`/`predict` already one-hot string features for you, but you can also
+materialize the encoding. `ordinal_encoder` keeps a fixed width (one integer
+code column per feature); `one_hot_encoder` emits **long format** — one row per
+active cell `(id, feature, category, value)` — which sidesteps the unknown width
+of a wide one-hot:
+
+```sql
+-- integer codes, one column per categorical feature
+SELECT * FROM sklearn.ordinal_encoder(
+  (SELECT customer_id, plan, region FROM customers), id := 'customer_id');
+
+-- one row per active category; pivot it back to a wide matrix in SQL
+PIVOT sklearn.one_hot_encoder(
+        (SELECT customer_id, plan FROM customers), id := 'customer_id')
+  ON category USING sum(value) GROUP BY customer_id;
+```
+
+A `NULL`/unseen value encodes to `-1` (ordinal) or contributes no active cell
+(one-hot).
+
 ### Cluster & find outliers
 
 ```sql
@@ -334,7 +359,7 @@ by-name features).
 
 **Transforms** (table in, `id` passthrough): `standard_scaler`, `minmax_scaler`,
 `robust_scaler`, `normalizer`, `simple_imputer`, `pca`, `truncated_svd`,
-`kmeans`, `dbscan`, `isolation_forest`.
+`kmeans`, `dbscan`, `isolation_forest`, `ordinal_encoder`, `one_hot_encoder`.
 
 **Metric aggregates** over `(y_true, y_pred)`:
 - Regression — `mean_squared_error`, `root_mean_squared_error`,

@@ -75,6 +75,9 @@ class ModelMetadata:
     task: str  # "classification" | "regression"
     target: str
     feature_names: list[str]
+    # Per-feature flag (aligned with feature_names): True for categorical (string)
+    # columns, which fit one-hot-encodes and predict must rebuild as strings.
+    categorical: list[bool] = field(default_factory=list)
     params: dict[str, Any] = field(default_factory=dict)
     classes: list[Any] | None = None
     n_samples: int = 0

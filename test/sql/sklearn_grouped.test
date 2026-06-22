@@ -91,6 +91,30 @@ SELECT bool_and(fit.n_features = 2 AND fit.task = 'classification') FROM (
 ----
 true
 
+# ---- string features are auto-encoded (one-hot) per group ----
+
+# a categorical feature alongside a numeric one; fit reports 2 features
+statement ok
+CREATE TEMP TABLE mc AS
+SELECT grp, sklearn.fit_model(
+         {'petal_class': CASE WHEN pl > 4.9 THEN 'long' WHEN pl > 2.5 THEN 'medium' ELSE 'short' END, 'sw': sw},
+         target, estimator := 'random_forest_classifier', hyperparams := '{}') AS fit
+FROM d GROUP BY grp;
+
+query I
+SELECT bool_and(fit.n_features = 2 AND fit.task = 'classification') FROM mc;
+----
+true
+
+# predict with each group's model re-applies the encoding
+query I
+SELECT count(*) FROM d JOIN mc USING (grp)
+WHERE sklearn.predict_one(mc.fit.model,
+        {'petal_class': CASE WHEN d.pl > 4.9 THEN 'long' WHEN d.pl > 2.5 THEN 'medium' ELSE 'short' END,
+         'sw': d.sw}) IS NOT NULL;
+----
+150
+
 # ---- regression per group ----
 
 query I

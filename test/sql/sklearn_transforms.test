@@ -75,5 +75,41 @@ FROM sklearn.isolation_forest((SELECT * FROM iris_feats), id => 'sample_id', con
 ----
 true
 
+# ---- ordinal_encoder: one integer code column per string feature ----
+
+# 150 rows preserved; the 3 species map to exactly 3 distinct codes {0,1,2}
+query III
+SELECT count(*), count(DISTINCT target_name), min(target_name) >= 0 AND max(target_name) = 2
+FROM sklearn.ordinal_encoder((SELECT sample_id, target_name FROM sklearn.iris()), id => 'sample_id');
+----
+150	3	true
+
+# codes are assigned alphabetically: setosa < versicolor < virginica -> 0,1,2
+query I
+SELECT bool_and(code = expected) FROM (
+  SELECT e.target_name AS code,
+         CASE i.target_name WHEN 'setosa' THEN 0 WHEN 'versicolor' THEN 1 ELSE 2 END AS expected
+  FROM sklearn.ordinal_encoder((SELECT sample_id, target_name FROM sklearn.iris()), id => 'sample_id') e
+  JOIN sklearn.iris() i USING (sample_id));
+----
+true
+
+# ---- one_hot_encoder: long format, one active cell per row ----
+
+# exactly one active category per input row (150), all value 1.0
+query III
+SELECT count(*), count(DISTINCT category), bool_and(value = 1.0)
+FROM sklearn.one_hot_encoder((SELECT sample_id, target_name FROM sklearn.iris()), id => 'sample_id');
+----
+150	3	true
+
+# pivots back to a wide one-hot whose row sums are 1 (inactive cells are NULL -> 0)
+query I
+SELECT bool_and(coalesce(setosa, 0) + coalesce(versicolor, 0) + coalesce(virginica, 0) = 1) FROM (
+  PIVOT sklearn.one_hot_encoder((SELECT sample_id, target_name FROM sklearn.iris()), id => 'sample_id')
+  ON category USING sum(value) GROUP BY sample_id);
+----
+true
+
 statement ok
 DETACH sklearn;

@@ -19,7 +19,8 @@ vgi_sklearn/
   datasets.py         dataset table functions (toy, generators, california_housing)
   metrics.py          metric aggregates over (y_true, y_pred)
   table_metrics.py    confusion_matrix / silhouette_score (buffering, table input)
-  transforms.py       unsupervised fit_transform (buffering)
+  transforms.py       unsupervised fit_transform + ordinal/one_hot encoders (buffering)
+  features.py         categorical (string) detection + auto one-hot Pipeline wrapping
   models.py           generic fit / predict / cross_val_predict + registry mgmt
   typed_models.py     generated fit_<estimator> functions with typed hyperparams
   search.py           grid_search — discriminated-union (sparse) hyperparameter search
@@ -75,7 +76,20 @@ arg, while `fit_<estimator>` exposes them as typed named args.
   param is real for its estimator. `max_depth := 0` maps to `None` (unlimited);
   mlp `hidden_units` maps to `hidden_layer_sizes=(n,)`.
 - **predict aligns features by name** (reorder-safe, extra columns ignored);
-  missing/non-numeric feature columns raise clear errors at bind.
+  missing feature columns raise clear errors at bind.
+- **Categorical (string) features auto-encode** (`features.py`). At fit, string
+  columns are detected (`categorical_mask`), the estimator is wrapped in a
+  `Pipeline(ColumnTransformer(OneHotEncoder(handle_unknown='ignore'),
+  passthrough), est)` (`wrap_estimator`), and the per-feature `categorical` mask
+  is stored in `ModelMetadata`. Because the whole pipeline is the saved model,
+  `predict` replays the encoding — it just rebuilds `X` with the same column
+  dtypes (`build_x`: cat cells str, numeric/bool cells float). This is uniform
+  across `fit`, `fit_<estimator>`, `grouped.fit_model`, and `grid_search` (which
+  prefixes grid keys `est__<param>` when wrapped, see `prefix_grid`). `n_features`
+  is the *original* feature count, not the one-hot width. The standalone
+  `ordinal_encoder` / `one_hot_encoder` transforms (transforms.py) expose the
+  encoding as data — one_hot uses long format `(id, feature, category, value)` to
+  dodge the data-dependent-width limit (edge #6).
 - **`grid_search` (search.py) is a discriminated union.** The `estimator` arg is
   a sparse Arrow union (`_GRID_UNION`, one member per estimator built from
   `_HPARAMS`, each field a `list<scalar>`); SQL calls it as

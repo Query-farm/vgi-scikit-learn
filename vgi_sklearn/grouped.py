@@ -45,6 +45,7 @@ from vgi.scalar_function import ScalarFunction
 from vgi.table_function import ProcessParams
 from vgi_rpc import ArrowSerializableDataclass
 
+from .features import build_x, categorical_mask, wrap_estimator
 from .models import CLASSIFICATION, build_estimator
 from .registry import ModelMetadata, now_iso, pack_model, unpack_model
 
@@ -53,27 +54,35 @@ from .registry import ModelMetadata, now_iso, pack_model, unpack_model
 # ---------------------------------------------------------------------------
 
 
-def _struct_rows(features: pa.Array) -> tuple[list[str], list[list[float]]]:
-    """Return (ordered feature names, numeric rows) from a struct column."""
+def _struct_rows(features: pa.Array) -> tuple[list[str], list[list[Any]], list[bool]]:
+    """Return (ordered feature names, raw rows, categorical mask) from a struct.
+
+    String fields are kept as strings (categorical); numeric/boolean fields are
+    coerced to floats. ``fit_group`` one-hot-encodes the categorical columns.
+    """
     if not pa.types.is_struct(features.type):
         raise ValueError("features must be a STRUCT, e.g. {'a': a, 'b': b}")
     names = [features.type.field(i).name for i in range(features.type.num_fields)]
-    rows: list[list[float]] = []
+    cat_mask = categorical_mask([features.type.field(i).type for i in range(features.type.num_fields)])
+    rows: list[list[Any]] = []
     for rec in features.to_pylist():
         rec = rec or {}
-        row: list[float] = []
-        for n in names:
+        row: list[Any] = []
+        for n, is_cat in zip(names, cat_mask, strict=True):
             v = rec.get(n)
-            try:
-                row.append(float(v) if v is not None else float("nan"))
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"feature {n!r} is not numeric (got {v!r})") from exc
+            if is_cat:
+                row.append(None if v is None else str(v))
+            else:
+                try:
+                    row.append(float(v) if v is not None else float("nan"))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"feature {n!r} is not numeric (got {v!r})") from exc
         rows.append(row)
-    return names, rows
+    return names, rows, cat_mask
 
 
-def _matrix_for(model_features: list[str], features: pa.Array) -> np.ndarray:
-    """Build the feature matrix for prediction, aligning struct fields by name."""
+def _matrix_for(model_features: list[str], features: pa.Array, cat_mask: list[bool]) -> np.ndarray:
+    """Build the prediction feature matrix, aligning struct fields by name."""
     if not pa.types.is_struct(features.type):
         raise ValueError("features must be a STRUCT")
     present = {features.type.field(i).name for i in range(features.type.num_fields)}
@@ -81,13 +90,8 @@ def _matrix_for(model_features: list[str], features: pa.Array) -> np.ndarray:
     if missing:
         raise ValueError(f"features struct is missing model column(s): {', '.join(missing)}")
     recs = features.to_pylist()
-    out = np.empty((len(recs), len(model_features)), dtype=float)
-    for i, rec in enumerate(recs):
-        rec = rec or {}
-        for j, name in enumerate(model_features):
-            v = rec.get(name)
-            out[i, j] = float(v) if v is not None else float("nan")
-    return out
+    rows = [[(rec or {}).get(name) for name in model_features] for rec in recs]
+    return build_x(rows, cat_mask or [False] * len(model_features))
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +109,7 @@ class FitState(ArrowSerializableDataclass):
 
     chunks: list[bytes] = field(default_factory=list)
     feature_names: list[str] = field(default_factory=list)
+    categorical: list[bool] = field(default_factory=list)
     target_numeric: bool = True
     estimator: str = ""
     params: str = ""
@@ -156,13 +161,13 @@ class FitModel(AggregateFunction[FitState]):
         estimator: Annotated[str, ConstParam(doc="Estimator name, e.g. 'random_forest_classifier'")],
         hyperparams: Annotated[str, ConstParam(doc="JSON hyperparameters; '{}' for defaults")],
     ) -> None:
-        names, rows = _struct_rows(features)
+        names, rows, cat_mask = _struct_rows(features)
         target_numeric = pa.types.is_floating(target.type) or pa.types.is_integer(target.type)
         tvals = target.to_pylist()
 
         # Group this batch, then reassign each touched group's state (the
         # framework only persists groups you assign — see CLAUDE.md edge #1).
-        per_group: dict[int, tuple[list[list[float]], list[Any]]] = {}
+        per_group: dict[int, tuple[list[list[Any]], list[Any]]] = {}
         for g, row, t in zip(group_ids.to_pylist(), rows, tvals, strict=True):
             fr, tg = per_group.setdefault(g, ([], []))
             fr.append(row)
@@ -173,6 +178,7 @@ class FitModel(AggregateFunction[FitState]):
             states[g] = FitState(
                 chunks=[*s.chunks, chunk],
                 feature_names=names,
+                categorical=cat_mask,
                 target_numeric=target_numeric,
                 estimator=estimator,
                 params=hyperparams or "",
@@ -183,6 +189,7 @@ class FitModel(AggregateFunction[FitState]):
         return FitState(
             chunks=source.chunks + target.chunks,
             feature_names=source.feature_names or target.feature_names,
+            categorical=source.categorical or target.categorical,
             target_numeric=source.target_numeric and target.target_numeric,
             estimator=source.estimator or target.estimator,
             params=source.params or target.params,
@@ -211,7 +218,8 @@ class FitModel(AggregateFunction[FitState]):
             targets.extend(payload["t"])
 
         task, estimator = build_estimator(s.estimator, _parse(s.params))
-        x = np.asarray(rows, dtype=float)
+        x = build_x(rows, s.categorical)
+        estimator = wrap_estimator(estimator, s.categorical)
         if task == CLASSIFICATION:
             y = (
                 np.asarray([str(t) for t in targets])
@@ -231,6 +239,7 @@ class FitModel(AggregateFunction[FitState]):
             task=task,
             target="",
             feature_names=s.feature_names,
+            categorical=s.categorical,
             params=_parse(s.params),
             classes=classes,
             n_samples=int(x.shape[0]),
@@ -278,7 +287,7 @@ def _predict_values(model: pa.Array, features: pa.Array, *, proba: bool = False)
             continue
         est, meta = _load(blob)
         sub = features.take(pa.array(idxs))
-        x = _matrix_for(meta.feature_names, sub)
+        x = _matrix_for(meta.feature_names, sub, meta.categorical)
         preds = est.predict_proba(x).tolist() if proba else est.predict(x).tolist()
         for k, i in enumerate(idxs):
             results[i] = preds[k]

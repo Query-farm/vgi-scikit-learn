@@ -55,7 +55,8 @@ from vgi.table_function import (
 from vgi.table_in_out_function import OutputCollector as InOutCollector
 from vgi.table_in_out_function import TableInOutGenerator
 
-from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
+from .buffering import DrainState, SinkBuffer, input_schema_of
+from .features import build_x, categorical_mask, rows_from_table, wrap_estimator
 from .registry import (
     ModelMetadata,
     ModelNotFoundError,
@@ -131,11 +132,12 @@ def build_estimator(name: str, params: dict[str, Any]) -> tuple[str, Any]:
         raise ValueError(f"invalid hyperparameters for {name!r}: {exc}") from exc
 
 
-def _xy(table: pa.Table, feature_names: list[str], target: str, task: str) -> tuple[np.ndarray, np.ndarray]:
-    x = matrix(table, feature_names)
+def _xy(table: pa.Table, feature_names: list[str], target: str, task: str) -> tuple[np.ndarray, np.ndarray, list[bool]]:
+    cat_mask = categorical_mask([table.schema.field(n).type for n in feature_names])
+    x = build_x(rows_from_table(table, feature_names), cat_mask)
     y = np.asarray(table.column(target).to_numpy(zero_copy_only=False))
     y = np.rint(y.astype(float)).astype(int) if task == CLASSIFICATION else y.astype(float)
-    return x, y
+    return x, y, cat_mask
 
 
 def _features_excluding(input_schema: pa.Schema, *exclude: str) -> list[str]:
@@ -205,7 +207,8 @@ def _fit_and_emit(
     if table is None or table.num_rows == 0:
         raise ValueError("fit received no training rows")
     feats = _features_excluding(input_schema, target, id_col)
-    x, y = _xy(table, feats, target, task)
+    x, y, cat_mask = _xy(table, feats, target, task)
+    estimator = wrap_estimator(estimator, cat_mask)
     estimator.fit(x, y)
     train_score = float(estimator.score(x, y))
     classes = [int(c) for c in estimator.classes_] if task == CLASSIFICATION else None
@@ -216,6 +219,7 @@ def _fit_and_emit(
         task=task,
         target=target,
         feature_names=feats,
+        categorical=cat_mask,
         params=params_dict,
         classes=classes,
         n_samples=int(table.num_rows),
@@ -428,7 +432,8 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
                     f"worker has {sklearn.__version__}; predictions may differ",
                 )
 
-        x = matrix(pa.Table.from_batches([batch]), meta.feature_names)
+        cat_mask = meta.categorical or [False] * len(meta.feature_names)
+        x = build_x(rows_from_table(pa.Table.from_batches([batch]), meta.feature_names), cat_mask)
 
         columns: dict[str, list[Any]] = {}
         if a.id:
@@ -526,7 +531,8 @@ class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
             )
             return
 
-        x, y = _xy(table, feats, a.target, task)
+        x, y, cat_mask = _xy(table, feats, a.target, task)
+        estimator = wrap_estimator(estimator, cat_mask)
         preds = sk_cross_val_predict(estimator, x, y, cv=a.cv)
 
         columns: dict[str, list[Any]] = {}

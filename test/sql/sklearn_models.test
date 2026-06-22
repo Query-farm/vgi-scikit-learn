@@ -80,6 +80,37 @@ SELECT count(*) FROM sklearn.cross_val_predict((SELECT * FROM iris_xy),
 ----
 150
 
+# ---- string features are auto-encoded (one-hot) inside fit/predict ----
+
+# a synthetic categorical feature alongside the numeric ones
+statement ok
+CREATE TEMP VIEW iris_cat AS
+  SELECT sample_id, sepal_width_cm, petal_width_cm,
+         CASE WHEN petal_length_cm > 4.9 THEN 'long'
+              WHEN petal_length_cm > 2.5 THEN 'medium' ELSE 'short' END AS petal_class,
+         target
+  FROM sklearn.iris();
+
+# fit reports 3 features (the string column counts as one feature, not its one-hot width)
+query II
+SELECT task, n_features
+FROM sklearn.fit((SELECT * FROM iris_cat), model_name => 'iris_cat_rf',
+                 estimator => 'random_forest_classifier', target => 'target', id => 'sample_id');
+----
+classification	3
+
+# predict re-applies the same encoding and scores well in-sample
+query I
+SELECT avg(CASE WHEN p.prediction = i.target THEN 1 ELSE 0 END) > 0.9
+FROM sklearn.predict((SELECT sample_id, sepal_width_cm, petal_width_cm,
+                        CASE WHEN petal_length_cm > 4.9 THEN 'long'
+                             WHEN petal_length_cm > 2.5 THEN 'medium' ELSE 'short' END AS petal_class
+                      FROM sklearn.iris()),
+                     model_name => 'iris_cat_rf', id => 'sample_id') p
+JOIN sklearn.iris() i USING (sample_id);
+----
+true
+
 # ---- a regression model fits and is tagged regression ----
 
 query I

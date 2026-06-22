@@ -10,6 +10,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
+import pyarrow as pa
 import pytest
 from sklearn.datasets import load_iris
 
@@ -17,6 +18,8 @@ from vgi_sklearn.transforms import (
     IsolationForestFn,
     KMeansFn,
     MinMaxScalerFn,
+    OneHotEncoderFn,
+    OrdinalEncoderFn,
     PcaFn,
     SimpleImputerFn,
     StandardScalerFn,
@@ -94,3 +97,34 @@ class TestImputer:
         assert not np.isnan(out["sepal_length"][0])
         # imputed value equals the mean of the remaining column
         assert out["sepal_length"][0] == pytest.approx(float(np.mean(X[1:, 0])))
+
+
+class TestEncoders:
+    def _table(self) -> pa.Table:
+        return pa.table({"id": [1, 2, 3, 4], "city": ["NYC", "LA", "NYC", None]})
+
+    def test_ordinal_codes_and_missing(self) -> None:
+        out = OrdinalEncoderFn.encode(self._table(), ["city"], SimpleNamespace(id="id"))
+        assert out["id"] == [1, 2, 3, 4]
+        # alphabetical: LA=0, NYC=1; missing -> -1
+        assert out["city"] == [1, 0, 1, -1]
+
+    def test_ordinal_output_schema(self) -> None:
+        schema = OrdinalEncoderFn.output_schema(
+            pa.schema([pa.field("id", pa.int64()), pa.field("city", pa.string())]), ["city"], SimpleNamespace(id="id")
+        )
+        assert schema.names == ["id", "city"]
+        assert schema.field("city").type == pa.int64()
+
+    def test_one_hot_active_cells_only(self) -> None:
+        out = OneHotEncoderFn.encode(self._table(), ["city"], SimpleNamespace(id="id"))
+        # the NULL row contributes no active cell
+        assert out["id"] == [1, 2, 3]
+        assert set(out["category"]) == {"NYC", "LA"}
+        assert out["value"] == [1.0, 1.0, 1.0]
+
+    def test_one_hot_output_schema(self) -> None:
+        schema = OneHotEncoderFn.output_schema(
+            pa.schema([pa.field("id", pa.int64()), pa.field("city", pa.string())]), ["city"], SimpleNamespace(id="id")
+        )
+        assert schema.names == ["id", "feature", "category", "value"]

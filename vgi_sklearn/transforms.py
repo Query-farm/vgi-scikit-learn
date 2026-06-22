@@ -30,6 +30,7 @@ from vgi.table_buffering_function import OutputCollector, TableBufferingParams
 from vgi.table_function import BindParams
 
 from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
+from .features import rows_from_table
 from .schema_utils import field as sfield
 
 
@@ -399,6 +400,179 @@ class IsolationForestFn(_BufferingTransform[IsolationForestArgs]):
         }
 
 
+# ===========================================================================
+# Categorical encoders (string input)
+#
+# Unlike the transforms above, the input columns here are *strings*. fit/predict
+# auto-encode categoricals internally, but these expose the encoding directly so
+# you can inspect or materialize it. ``ordinal_encoder`` keeps a fixed width
+# (one integer code column per feature); ``one_hot_encoder`` emits long format
+# (one row per active cell), sidestepping the data-dependent-width limit.
+# ===========================================================================
+
+
+class _EncoderBase[TArgs](SinkBuffer[TArgs, DrainState]):
+    """Buffer the whole input, encode string features once in finalize, stream out."""
+
+    @classmethod
+    def feature_names(cls, input_schema: pa.Schema, id_col: str) -> list[str]:
+        return [n for n in input_schema.names if n != id_col]
+
+    @classmethod
+    def output_schema(cls, input_schema: pa.Schema, feats: list[str], args: Any) -> pa.Schema:
+        raise NotImplementedError
+
+    @classmethod
+    def encode(cls, table: pa.Table, feats: list[str], args: Any) -> dict[str, list[Any]]:
+        raise NotImplementedError
+
+    @classmethod
+    def on_bind(cls, params: BindParams[TArgs]) -> BindResponse:
+        ins = params.bind_call.input_schema
+        assert ins is not None
+        feats = cls.feature_names(ins, params.args.id)
+        return BindResponse(output_schema=cls.output_schema(ins, feats, params.args))
+
+    @classmethod
+    def initial_finalize_state(cls, finalize_state_id: bytes, params: TableBufferingParams[TArgs]) -> DrainState:
+        return DrainState()
+
+    @classmethod
+    def finalize(
+        cls,
+        params: TableBufferingParams[TArgs],
+        finalize_state_id: bytes,
+        state: DrainState,
+        out: OutputCollector,
+    ) -> None:
+        if state.done:
+            out.finish()
+            return
+        state.done = True
+
+        ins = input_schema_of(params)
+        feats = cls.feature_names(ins, params.args.id)
+        table = cls.buffered_table(params, ins)
+        out_schema = params.output_schema
+        if table is None or table.num_rows == 0:
+            out.emit(pa.RecordBatch.from_pydict({n: [] for n in out_schema.names}, schema=out_schema))
+            return
+        out.emit(pa.RecordBatch.from_pydict(cls.encode(table, feats, params.args), schema=out_schema))
+
+
+def _str_matrix(table: pa.Table, feats: list[str]) -> np.ndarray:
+    """Object matrix of the feature columns, NULL preserved as NaN, else string."""
+    recs = rows_from_table(table, feats)
+    return np.array([[float("nan") if v is None else str(v) for v in row] for row in recs], dtype=object)
+
+
+class OrdinalEncoderFn(_EncoderBase[_BaseArgs]):
+    FunctionArguments: ClassVar[type] = _BaseArgs
+
+    class Meta:
+        name = "ordinal_encoder"
+        description = "Encode each categorical (string) column as integer codes (one column per feature)"
+        categories = ["preprocessing", "encoding"]
+        examples = [
+            FunctionExample(
+                sql=(
+                    "SELECT * FROM sklearn.ordinal_encoder("
+                    "(SELECT sample_id, target_name FROM sklearn.iris()), id => 'sample_id')"
+                ),
+                description="Encode the iris species name as an integer code",
+            )
+        ]
+
+    @classmethod
+    def output_schema(cls, input_schema: pa.Schema, feats: list[str], args: Any) -> pa.Schema:
+        fields: list[pa.Field] = []
+        if args.id:
+            fields.append(input_schema.field(args.id))
+        fields.extend(
+            sfield(f, pa.int64(), f"Integer code for {f} (-1 = missing/unseen).", nullable=False) for f in feats
+        )
+        return pa.schema(fields)
+
+    @classmethod
+    def encode(cls, table: pa.Table, feats: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.preprocessing import OrdinalEncoder
+
+        enc = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1, encoded_missing_value=-1)
+        codes = enc.fit_transform(_str_matrix(table, feats))
+        cols: dict[str, list[Any]] = {}
+        if args.id:
+            cols[args.id] = table.column(args.id).to_pylist()
+        for j, f in enumerate(feats):
+            cols[f] = [int(v) for v in codes[:, j]]
+        return cols
+
+
+class OneHotEncoderFn(_EncoderBase[_BaseArgs]):
+    FunctionArguments: ClassVar[type] = _BaseArgs
+
+    class Meta:
+        name = "one_hot_encoder"
+        description = "One-hot encode categorical (string) columns in long format (id, feature, category, value)"
+        categories = ["preprocessing", "encoding"]
+        examples = [
+            FunctionExample(
+                sql=(
+                    "SELECT * FROM sklearn.one_hot_encoder("
+                    "(SELECT sample_id, target_name FROM sklearn.iris()), id => 'sample_id')"
+                ),
+                description="One-hot encode the iris species name (one row per active category)",
+            )
+        ]
+
+    @classmethod
+    def output_schema(cls, input_schema: pa.Schema, feats: list[str], args: Any) -> pa.Schema:
+        fields: list[pa.Field] = []
+        if args.id:
+            fields.append(input_schema.field(args.id))
+        fields.extend(
+            [
+                sfield("feature", pa.string(), "Source feature column.", nullable=False),
+                sfield("category", pa.string(), "Category value that is set for this row.", nullable=False),
+                sfield("value", pa.float64(), "Indicator value (always 1.0 for an active cell).", nullable=False),
+            ]
+        )
+        return pa.schema(fields)
+
+    @classmethod
+    def encode(cls, table: pa.Table, feats: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.preprocessing import OneHotEncoder
+
+        enc = OneHotEncoder(handle_unknown="ignore", sparse_output=True)
+        matrix_oh = enc.fit_transform(_str_matrix(table, feats)).tocoo()
+        # Map each one-hot column back to its (feature, category).
+        col_map: list[tuple[str, Any]] = [
+            (feats[fi], cat) for fi, cats in enumerate(enc.categories_) for cat in cats
+        ]
+        id_vals = table.column(args.id).to_pylist() if args.id else None
+
+        ids: list[Any] = []
+        feature_col: list[str] = []
+        category_col: list[str] = []
+        value_col: list[float] = []
+        for r, c, v in zip(matrix_oh.row.tolist(), matrix_oh.col.tolist(), matrix_oh.data.tolist(), strict=True):
+            feature, category = col_map[c]
+            if isinstance(category, float) and np.isnan(category):  # skip the missing-value category
+                continue
+            if id_vals is not None:
+                ids.append(id_vals[r])
+            feature_col.append(feature)
+            category_col.append(str(category))
+            value_col.append(float(v))
+
+        cols: dict[str, list[Any]] = {}
+        if args.id:
+            cols[args.id] = ids
+        cols["feature"] = feature_col
+        cols["category"] = category_col
+        cols["value"] = value_col
+        return cols
+
+
 TRANSFORM_FUNCTIONS: list[type] = [
     StandardScalerFn,
     MinMaxScalerFn,
@@ -410,4 +584,6 @@ TRANSFORM_FUNCTIONS: list[type] = [
     KMeansFn,
     DbscanFn,
     IsolationForestFn,
+    OrdinalEncoderFn,
+    OneHotEncoderFn,
 ]
