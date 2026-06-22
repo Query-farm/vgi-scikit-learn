@@ -50,12 +50,17 @@ Every modeling function follows the same SQL-friendly contract:
   `sklearn.pca((SELECT ...), …)`. (DuckDB allows a table function only one
   subquery argument, so the data goes there; everything else is a named arg.)
 - **Named arguments use `:=`** — `n_clusters := 3`, `target := 'label'`.
-- **`target`** names your label column (for training). **`id`** names a column
-  to carry through untouched so you can join results back to the source row.
-  **Every other column is treated as a numeric feature** — so `SELECT` only the
-  columns you want as features (non-numeric columns raise a clear error).
-- **Results line up by `id`.** `predict`/`kmeans`/… emit your `id` next to the
-  `prediction`/`cluster`/… so a plain `JOIN ... USING (id)` reattaches them.
+- **`target`** names your label column (training only). **`id`** names an
+  identifier column that is **never used as a feature**. **Every other column is
+  treated as a numeric feature** — so `SELECT` only the columns you want as
+  features (non-numeric columns raise a clear error).
+- **What `id` does depends on the function.** Functions that emit one row per
+  input row — `predict`, the transforms, `cross_val_predict` — copy your `id`
+  onto each output row, so a plain `JOIN ... USING (id)` reattaches results to
+  the source. **`fit` returns a single summary row** (it doesn't echo your data),
+  so there `id` does just one thing: keep that identifier column out of the
+  feature matrix. Either way, pass `id` so the model never trains on a
+  meaningless key like `customer_id`.
 - **Features are matched by name, not position.** A model trained on
   `age, income` scores correctly whether you feed it `income, age` or a table
   with extra columns — it pulls its own features by name and errors if one is
@@ -84,12 +89,16 @@ SELECT estimator, task, n_samples, n_features, train_score
 FROM sklearn.fit_gradient_boosting_classifier(
   (SELECT customer_id, tenure, monthly_spend, support_tickets, churned FROM churn),
   model_name := 'churn_gb',          -- store it in the registry under this name
-  target := 'churned',
-  id := 'customer_id',
+  target := 'churned',               -- the label column
+  id := 'customer_id',               -- identifier: excluded from features (not trained on)
   n_estimators := 300,
   learning_rate := 0.05,
   max_depth := 3);
 ```
+
+`fit` returns one summary row describing the trained model (and the model
+itself, as a BLOB) — `id` here isn't echoed back, it just tells the worker that
+`customer_id` is an identifier, not a feature to learn from.
 
 ```sql
 -- a regressor
