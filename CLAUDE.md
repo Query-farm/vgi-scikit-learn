@@ -23,6 +23,7 @@ vgi_sklearn/
   models.py           generic fit / predict / cross_val_predict + registry mgmt
   typed_models.py     generated fit_<estimator> functions with typed hyperparams
   search.py           grid_search — discriminated-union (sparse) hyperparameter search
+  grouped.py          per-group modeling: fit_model (aggregate) + predict_* (scalars)
   registry.py         ModelStore + LocalDiskStore (S3/R2 seam) + model-BLOB pack/unpack
   buffering.py        shared sink/combine/serialize/matrix helpers (numeric validation)
   schema_utils.py     pa.Field comment helper, name sanitisation, NoArgs
@@ -91,6 +92,27 @@ arg, while `fit_<estimator>` exposes them as typed named args.
   on the released PyPI vgi-python stays green. When a vgi-python with the fix is
   released, bump the pin and drop the gating. (Dense unions are still unsupported
   by the C++ extension; `union_value` produces sparse, which works.)
+- **Per-group modeling (grouped.py) is an aggregate + scalars** — table functions
+  can't take correlated/lateral args, so column-driven dispatch is impossible;
+  `fit_model` is an `AggregateFunction` (`GROUP BY` partitions for free, returns
+  one `STRUCT(model BLOB, …)` per group) and `predict_one`/`predict_class_one`
+  (string labels)/`predict_proba_one` (`DOUBLE[]`) are `ScalarFunction`s taking a
+  per-row model BLOB + feature `STRUCT`. Works on released PyPI vgi-python (no
+  gating). Sharp edges hit here:
+    - Any-typed input column = `Annotated[pa.Array, Param(...)]` (generic
+      `pa.Array` → AnyArrow); fixed struct = `Param(arrow_type=pa.struct(...))`.
+      The target is AnyArrow so int/float/**string** labels bind with no cast.
+    - **Never name an aggregate `update()` parameter `params`** — the framework
+      injects `ProcessParams` into any arg named `params`, clobbering your value.
+      Use `hyperparams`.
+    - **Aggregate const params can't be optional** — DuckDB requires all declared
+      params, so a `ConstParam` default won't bind when omitted (`hyperparams` is
+      required; pass `'{}'`).
+    - **VARIANT can't be a result type**: DuckDB itself can't move VARIANT over
+      Arrow (`Unsupported Arrow type VARIANT`), so the polymorphic prediction is
+      split into typed scalars (`predict_one`/`predict_class_one`/`_proba_one`).
+    - `_load` is `lru_cache`d on BLOB bytes → a joined per-group model is
+      deserialized once, not per row.
 - **Serialization is skops, not pickle** (`registry._skops_dumps/_skops_loads`,
   `.skops` files + skops BLOBs). Loading reconstructs only known types and we
   restrict trust to the `sklearn`/`numpy`/`scipy` namespaces (`_TRUSTED_PREFIXES`)

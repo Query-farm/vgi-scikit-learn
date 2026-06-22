@@ -1,0 +1,95 @@
+# name: test/sql/sklearn_grouped.test
+# description: Per-group modeling — fit_model aggregate + predict_* scalars
+# group: [vgi_sklearn]
+
+require-env VGI_SKLEARN_WORKER
+
+require vgi
+
+require httpfs
+
+statement ok
+ATTACH 'sklearn' AS sklearn (TYPE vgi, LOCATION '${VGI_SKLEARN_WORKER}');
+
+# Two groups (sample_id % 2), each holding all three iris species.
+statement ok
+CREATE TEMP VIEW d AS
+  SELECT sample_id, (sample_id % 2) AS grp,
+         sepal_length_cm AS sl, sepal_width_cm AS sw, petal_length_cm AS pl, petal_width_cm AS pw,
+         target, target_name
+  FROM sklearn.iris();
+
+# ---- fit one classifier per group via GROUP BY (numeric labels) ----
+
+statement ok
+CREATE TEMP TABLE m AS
+SELECT grp, sklearn.fit_model({'sl': sl, 'sw': sw, 'pl': pl, 'pw': pw}, target,
+                              estimator := 'random_forest_classifier', hyperparams := '{}') AS fit
+FROM d GROUP BY grp;
+
+# one model per group, each with all 3 classes and a real BLOB
+query III
+SELECT count(*), count(DISTINCT fit.n_classes), bool_and(octet_length(fit.model) > 0)::INT
+FROM m;
+----
+2	1	1
+
+query I
+SELECT bool_and(fit.task = 'classification' AND fit.n_samples = 75) FROM m;
+----
+true
+
+# predict each row with ITS group's model -> high in-sample accuracy
+query I
+SELECT avg((sklearn.predict_one(m.fit.model, {'sl': d.sl, 'sw': d.sw, 'pl': d.pl, 'pw': d.pw}) = d.target)::INT) > 0.95
+FROM d JOIN m USING (grp);
+----
+true
+
+# ---- string class labels survive end to end ----
+
+statement ok
+CREATE TEMP TABLE ms AS
+SELECT grp, sklearn.fit_model({'sl': sl, 'sw': sw, 'pl': pl, 'pw': pw}, target_name,
+                              estimator := 'random_forest_classifier', hyperparams := '{}') AS fit
+FROM d GROUP BY grp;
+
+# predict_class_one returns the actual string label
+query I
+SELECT avg((sklearn.predict_class_one(ms.fit.model, {'sl': d.sl, 'sw': d.sw, 'pl': d.pl, 'pw': d.pw}) = d.target_name)::INT) > 0.95
+FROM d JOIN ms USING (grp);
+----
+true
+
+# probabilities sum to 1
+query I
+SELECT round(list_sum(sklearn.predict_proba_one(ms.fit.model, {'sl': 5.1, 'sw': 3.5, 'pl': 1.4, 'pw': 0.2})), 6)
+FROM ms LIMIT 1;
+----
+1.0
+
+# ---- features align by name, not position; a missing feature errors ----
+
+query I
+SELECT count(*) FROM d JOIN m USING (grp)
+WHERE sklearn.predict_one(m.fit.model, {'pw': d.pw, 'pl': d.pl, 'sw': d.sw, 'sl': d.sl}) IS NOT NULL;
+----
+150
+
+statement error
+SELECT sklearn.predict_one(m.fit.model, {'sl': d.sl, 'sw': d.sw}) FROM d JOIN m USING (grp) LIMIT 1;
+----
+missing model column
+
+# ---- regression per group ----
+
+query I
+SELECT bool_and(fit.task = 'regression') FROM (
+  SELECT sklearn.fit_model({'age': age, 'bmi': bmi, 'bp': bp}, target,
+                           estimator := 'ridge', hyperparams := '{}') AS fit
+  FROM (SELECT (sample_id % 2) AS grp, * FROM sklearn.diabetes()) GROUP BY grp);
+----
+true
+
+statement ok
+DETACH sklearn;

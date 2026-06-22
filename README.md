@@ -208,6 +208,48 @@ SELECT * FROM sklearn.predict((SELECT * FROM new_customers), model := getvariabl
 > union-tag-preserving decoding (newer than 0.8.2). Against an older vgi-python
 > the function is simply not registered.
 
+### Train a model per group (segment)
+
+Sometimes you want *one model per segment* — per region, per cohort, per product
+line. `fit_model` is an **aggregate**, so `GROUP BY` does the partitioning for
+free and you get one model per group in a single query. Features go in as a
+named `STRUCT`; the target can be numeric **or** string class labels.
+
+```sql
+-- one churn model per segment
+CREATE TABLE segment_models AS
+SELECT (customer_id % 3) AS segment,       -- use your real segment column
+       sklearn.fit_model({'tenure': tenure, 'monthly_spend': monthly_spend, 'support_tickets': support_tickets},
+                         churned, estimator := 'gradient_boosting_classifier', hyperparams := '{}') AS m
+FROM churn
+GROUP BY segment;
+
+SELECT segment, m.task, m.n_samples, round(m.train_score, 3) FROM segment_models;
+```
+
+`m` is a `STRUCT` holding the `model` BLOB plus diagnostics (`task`, `n_samples`,
+`n_features`, `n_classes`, `train_score`). To score, the prediction functions are
+**scalars** that take a per-row model BLOB and a feature struct — so each row is
+scored by *its* group's model via a plain join:
+
+```sql
+SELECT c.customer_id,
+       sklearn.predict_class_one(m.m.model,
+         {'tenure': c.tenure, 'monthly_spend': c.monthly_spend, 'support_tickets': c.support_tickets}) AS prediction
+FROM churn c
+JOIN segment_models m ON (c.customer_id % 3) = m.segment;
+```
+
+- `predict_one(model, features) → DOUBLE` — regression / numeric class.
+- `predict_class_one(model, features) → VARCHAR` — the class label as text (works
+  for string *and* numeric labels).
+- `predict_proba_one(model, features) → DOUBLE[]` — per-class probabilities.
+
+Features align **by name** (reorder-safe; a missing feature errors), and a model
+trained on string labels predicts string labels. The model BLOB is the same
+format `fit`/`grid_search` produce, so these scalars also score any model you've
+stored in a table or registry.
+
 ### Score predictions you already have
 
 The metric functions are plain aggregates over two columns — point them at any
@@ -285,6 +327,10 @@ SELECT * FROM sklearn.make_blobs(n_samples := 300, centers := 4);   -- synthetic
 **Models:** `fit_<estimator>` (typed, see the table above), generic `fit`
 (escape hatch with JSON `params`), `predict`, `cross_val_predict`, `grid_search`
 (union-typed hyperparameter search), `list_models`, `model_info`, `drop_model`.
+
+**Per-group models:** `fit_model` (aggregate — one model per `GROUP BY` group),
+`predict_one` / `predict_class_one` / `predict_proba_one` (scalars — per-row,
+by-name features).
 
 **Transforms** (table in, `id` passthrough): `standard_scaler`, `minmax_scaler`,
 `robust_scaler`, `normalizer`, `simple_imputer`, `pca`, `truncated_svd`,
@@ -416,6 +462,7 @@ vgi_sklearn/
   models.py            generic fit / predict / cross_val_predict / registry mgmt
   typed_models.py      generated fit_<estimator> functions (typed hyperparameters)
   search.py            grid_search (discriminated-union hyperparameter search)
+  grouped.py           fit_model (aggregate) + predict_* scalars (per-group modeling)
   registry.py          ModelStore (local disk; S3/R2 seam) + model-BLOB pack/unpack
   buffering.py         shared sink/combine/matrix helpers
   schema_utils.py      Arrow schema helpers

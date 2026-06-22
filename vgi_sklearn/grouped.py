@@ -1,0 +1,345 @@
+"""Per-group modeling: fit one model per ``GROUP BY`` key, predict per row.
+
+This pairs an **aggregate** with **scalar** functions to sidestep table-function
+limits (no correlated/lateral args), and is the natural fit for "a model per
+segment" research:
+
+* ``fit_model`` -- an aggregate, so ``GROUP BY`` does the partitioning. Each
+  group's rows are buffered, an estimator is fit on them, and one ``STRUCT``
+  (the model as a BLOB plus diagnostics) is returned per group.
+* ``predict_one`` / ``predict_class_one`` / ``predict_proba_one`` -- scalars that
+  take a per-row model BLOB and a feature ``STRUCT``, so you can score each row
+  with the model for *its* group (a plain join), or even a different model per
+  row.
+
+    -- a model per region
+    CREATE TABLE models AS
+      SELECT region, sklearn.fit_model({'tenure': tenure, 'spend': spend}, churned,
+                                       estimator := 'gradient_boosting_classifier') AS m
+      FROM customers GROUP BY region;
+
+    -- score each customer with their region's model
+    SELECT c.id, sklearn.predict_class_one(m.m.model, {'tenure': c.tenure, 'spend': c.spend})
+    FROM customers c JOIN models m USING (region);
+
+Features are passed as a ``STRUCT`` (named, so alignment is by name), the target
+as any type (numeric for regression; numeric **or** string labels for
+classification -- the label dtype is preserved). Hyperparameters are a JSON
+string (aggregate args are constant scalars).
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from functools import lru_cache
+from typing import Annotated, Any
+
+import numpy as np
+import pyarrow as pa
+import sklearn
+from vgi.aggregate_function import AggregateFunction
+from vgi.arguments import ConstParam, Param, Returns
+from vgi.metadata import FunctionExample
+from vgi.scalar_function import ScalarFunction
+from vgi.table_function import ProcessParams
+from vgi_rpc import ArrowSerializableDataclass
+
+from .models import CLASSIFICATION, build_estimator
+from .registry import ModelMetadata, now_iso, pack_model, unpack_model
+
+# ---------------------------------------------------------------------------
+# Feature / target extraction
+# ---------------------------------------------------------------------------
+
+
+def _struct_rows(features: pa.Array) -> tuple[list[str], list[list[float]]]:
+    """Return (ordered feature names, numeric rows) from a struct column."""
+    if not pa.types.is_struct(features.type):
+        raise ValueError("features must be a STRUCT, e.g. {'a': a, 'b': b}")
+    names = [features.type.field(i).name for i in range(features.type.num_fields)]
+    rows: list[list[float]] = []
+    for rec in features.to_pylist():
+        rec = rec or {}
+        row: list[float] = []
+        for n in names:
+            v = rec.get(n)
+            try:
+                row.append(float(v) if v is not None else float("nan"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"feature {n!r} is not numeric (got {v!r})") from exc
+        rows.append(row)
+    return names, rows
+
+
+def _matrix_for(model_features: list[str], features: pa.Array) -> np.ndarray:
+    """Build the feature matrix for prediction, aligning struct fields by name."""
+    if not pa.types.is_struct(features.type):
+        raise ValueError("features must be a STRUCT")
+    present = {features.type.field(i).name for i in range(features.type.num_fields)}
+    missing = [f for f in model_features if f not in present]
+    if missing:
+        raise ValueError(f"features struct is missing model column(s): {', '.join(missing)}")
+    recs = features.to_pylist()
+    out = np.empty((len(recs), len(model_features)), dtype=float)
+    for i, rec in enumerate(recs):
+        rec = rec or {}
+        for j, name in enumerate(model_features):
+            v = rec.get(name)
+            out[i, j] = float(v) if v is not None else float("nan")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# fit_model (aggregate)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(kw_only=True)
+class FitState(ArrowSerializableDataclass):
+    """Per-group accumulation: each ``update`` appends one JSON chunk of its rows.
+
+    Storing per-batch chunks (rather than one growing list) keeps the
+    reassign-to-persist cost proportional to the number of batches, not rows.
+    """
+
+    chunks: list[bytes] = field(default_factory=list)
+    feature_names: list[str] = field(default_factory=list)
+    target_numeric: bool = True
+    estimator: str = ""
+    params: str = ""
+
+
+_FIT_RESULT = pa.struct(
+    [
+        pa.field("model", pa.binary()),
+        pa.field("estimator", pa.string()),
+        pa.field("task", pa.string()),
+        pa.field("n_samples", pa.int64()),
+        pa.field("n_features", pa.int64()),
+        pa.field("n_classes", pa.int64()),
+        pa.field("train_score", pa.float64()),
+    ]
+)
+
+
+class FitModel(AggregateFunction[FitState]):
+    """Fit one estimator per ``GROUP BY`` group; emit the model + diagnostics."""
+
+    class Meta:
+        name = "fit_model"
+        description = "Fit one model per group (aggregate); returns the model BLOB + diagnostics"
+        categories = ["models", "supervised", "grouped"]
+        examples = [
+            FunctionExample(
+                sql=(
+                    "SELECT region, sklearn.fit_model("
+                    "{'tenure': tenure, 'spend': spend}, churned, "
+                    "estimator := 'gradient_boosting_classifier', hyperparams := '{}') AS m "
+                    "FROM customers GROUP BY region"
+                ),
+                description="One churn model per region",
+            )
+        ]
+
+    @classmethod
+    def initial_state(cls, params: ProcessParams[None]) -> FitState:
+        return FitState()
+
+    @classmethod
+    def update(
+        cls,
+        states: dict[int, FitState],
+        group_ids: pa.Int64Array,
+        features: Annotated[pa.Array, Param(doc="Feature STRUCT, e.g. {'a': a, 'b': b}")],
+        target: Annotated[pa.Array, Param(doc="Target column (numeric, or string class labels)")],
+        estimator: Annotated[str, ConstParam(doc="Estimator name, e.g. 'random_forest_classifier'")],
+        hyperparams: Annotated[str, ConstParam(doc="JSON hyperparameters; '{}' for defaults")],
+    ) -> None:
+        names, rows = _struct_rows(features)
+        target_numeric = pa.types.is_floating(target.type) or pa.types.is_integer(target.type)
+        tvals = target.to_pylist()
+
+        # Group this batch, then reassign each touched group's state (the
+        # framework only persists groups you assign — see CLAUDE.md edge #1).
+        per_group: dict[int, tuple[list[list[float]], list[Any]]] = {}
+        for g, row, t in zip(group_ids.to_pylist(), rows, tvals, strict=True):
+            fr, tg = per_group.setdefault(g, ([], []))
+            fr.append(row)
+            tg.append(t)
+        for g, (fr, tg) in per_group.items():
+            s = states[g]
+            chunk = json.dumps({"f": fr, "t": tg}).encode("utf-8")
+            states[g] = FitState(
+                chunks=[*s.chunks, chunk],
+                feature_names=names,
+                target_numeric=target_numeric,
+                estimator=estimator,
+                params=hyperparams or "",
+            )
+
+    @classmethod
+    def combine(cls, source: FitState, target: FitState, params: ProcessParams[None]) -> FitState:
+        return FitState(
+            chunks=source.chunks + target.chunks,
+            feature_names=source.feature_names or target.feature_names,
+            target_numeric=source.target_numeric and target.target_numeric,
+            estimator=source.estimator or target.estimator,
+            params=source.params or target.params,
+        )
+
+    @classmethod
+    def finalize(
+        cls,
+        group_ids: pa.Int64Array,
+        states: dict[int, FitState],
+        params: ProcessParams[None],
+    ) -> Annotated[pa.RecordBatch, Returns(_FIT_RESULT)]:
+        results: list[dict[str, Any] | None] = []
+        for gid in group_ids:
+            s = states.get(gid.as_py())
+            results.append(None if s is None or not s.chunks else cls._fit_group(s))
+        return pa.record_batch({"result": pa.array(results, type=_FIT_RESULT)})
+
+    @classmethod
+    def _fit_group(cls, s: FitState) -> dict[str, Any]:
+        rows: list[list[float]] = []
+        targets: list[Any] = []
+        for chunk in s.chunks:
+            payload = json.loads(chunk)
+            rows.extend(payload["f"])
+            targets.extend(payload["t"])
+
+        task, estimator = build_estimator(s.estimator, _parse(s.params))
+        x = np.asarray(rows, dtype=float)
+        if task == CLASSIFICATION:
+            y = (
+                np.asarray([str(t) for t in targets])
+                if not s.target_numeric
+                else np.rint(np.asarray(targets, dtype=float)).astype(int)
+            )
+        else:
+            y = np.asarray(targets, dtype=float)
+
+        estimator.fit(x, y)
+        classes = (
+            [c.item() if hasattr(c, "item") else c for c in estimator.classes_] if task == CLASSIFICATION else None
+        )
+        meta = ModelMetadata(
+            name="",
+            estimator=s.estimator,
+            task=task,
+            target="",
+            feature_names=s.feature_names,
+            params=_parse(s.params),
+            classes=classes,
+            n_samples=int(x.shape[0]),
+            n_features=int(x.shape[1]),
+            train_score=float(estimator.score(x, y)),
+            sklearn_version=sklearn.__version__,
+            created_at=now_iso(),
+        )
+        return {
+            "model": pack_model(estimator, meta),
+            "estimator": s.estimator,
+            "task": task,
+            "n_samples": meta.n_samples,
+            "n_features": meta.n_features,
+            "n_classes": len(classes) if classes is not None else None,
+            "train_score": meta.train_score,
+        }
+
+
+def _parse(params: str) -> dict[str, Any]:
+    params = (params or "").strip()
+    return json.loads(params) if params else {}
+
+
+# ---------------------------------------------------------------------------
+# predict scalars (per-row, model BLOB + feature STRUCT)
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=128)
+def _load(blob: bytes) -> tuple[Any, ModelMetadata]:
+    """Deserialize a model BLOB, cached by identity so a per-group model loads once."""
+    return unpack_model(blob)
+
+
+def _predict_values(model: pa.Array, features: pa.Array, *, proba: bool = False) -> list[Any]:
+    # rows often share a model (per-group join), so group by blob to predict in batches
+    blobs = model.to_pylist()
+    by_blob: dict[bytes, list[int]] = {}
+    for i, b in enumerate(blobs):
+        by_blob.setdefault(b, []).append(i)
+    results: list[Any] = [None] * len(blobs)
+    for blob, idxs in by_blob.items():
+        if blob is None:
+            continue
+        est, meta = _load(blob)
+        sub = features.take(pa.array(idxs))
+        x = _matrix_for(meta.feature_names, sub)
+        preds = est.predict_proba(x).tolist() if proba else est.predict(x).tolist()
+        for k, i in enumerate(idxs):
+            results[i] = preds[k]
+    return results
+
+
+class PredictOne(ScalarFunction):
+    """Predict one numeric value per row (regression, or numeric class labels)."""
+
+    class Meta:
+        name = "predict_one"
+        description = "Score a row through a model BLOB; returns a numeric prediction"
+        categories = ["models", "inference", "grouped"]
+
+    @classmethod
+    def compute(
+        cls,
+        model: Annotated[pa.BinaryArray, Param(doc="A model BLOB (from fit_model / fit)")],
+        features: Annotated[pa.Array, Param(doc="Feature STRUCT")],
+    ) -> Annotated[pa.DoubleArray, Returns(pa.float64())]:
+        vals = _predict_values(model, features)
+        return pa.array([None if v is None else float(v) for v in vals], type=pa.float64())
+
+
+class PredictClassOne(ScalarFunction):
+    """Predict the class label per row as text (supports string labels)."""
+
+    class Meta:
+        name = "predict_class_one"
+        description = "Score a row through a classifier BLOB; returns the class label as text"
+        categories = ["models", "inference", "grouped"]
+
+    @classmethod
+    def compute(
+        cls,
+        model: Annotated[pa.BinaryArray, Param(doc="A classifier model BLOB")],
+        features: Annotated[pa.Array, Param(doc="Feature STRUCT")],
+    ) -> Annotated[pa.StringArray, Returns(pa.string())]:
+        vals = _predict_values(model, features)
+        return pa.array([None if v is None else str(v) for v in vals], type=pa.string())
+
+
+class PredictProbaOne(ScalarFunction):
+    """Predict per-class probabilities per row, in the model's class order."""
+
+    class Meta:
+        name = "predict_proba_one"
+        description = "Class probabilities for a row through a classifier BLOB (DOUBLE[])"
+        categories = ["models", "inference", "grouped"]
+
+    @classmethod
+    def compute(
+        cls,
+        model: Annotated[pa.BinaryArray, Param(doc="A classifier model BLOB")],
+        features: Annotated[pa.Array, Param(doc="Feature STRUCT")],
+    ) -> Annotated[pa.ListArray, Returns(pa.list_(pa.float64()))]:
+        vals = _predict_values(model, features, proba=True)
+        return pa.array(
+            [None if v is None else [float(p) for p in v] for v in vals],
+            type=pa.list_(pa.float64()),
+        )
+
+
+GROUPED_FUNCTIONS: list[type] = [FitModel, PredictOne, PredictClassOne, PredictProbaOne]

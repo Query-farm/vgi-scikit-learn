@@ -24,6 +24,7 @@ from vgi.catalog.catalog_interface import CatalogAttachResult, CatalogInfo
 
 from vgi_sklearn import __version__
 from vgi_sklearn.datasets import DATASET_FUNCTIONS
+from vgi_sklearn.grouped import GROUPED_FUNCTIONS
 from vgi_sklearn.metrics import METRIC_FUNCTIONS
 from vgi_sklearn.models import MODEL_FUNCTIONS
 from vgi_sklearn.table_metrics import TABLE_METRIC_FUNCTIONS
@@ -51,6 +52,7 @@ _FUNCTIONS: list[type] = [
     *TRANSFORM_FUNCTIONS,
     *MODEL_FUNCTIONS,
     *TYPED_FIT_FUNCTIONS,
+    *GROUPED_FUNCTIONS,
     *SEARCH_FUNCTIONS,
 ]
 
