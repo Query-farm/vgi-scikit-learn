@@ -56,7 +56,16 @@ from vgi.table_in_out_function import OutputCollector as InOutCollector
 from vgi.table_in_out_function import TableInOutGenerator
 
 from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
-from .registry import ModelMetadata, ModelNotFoundError, get_store, now_iso, validate_name
+from .registry import (
+    ModelMetadata,
+    ModelNotFoundError,
+    get_store,
+    now_iso,
+    pack_model,
+    unpack_meta,
+    unpack_model,
+    validate_name,
+)
 from .schema_utils import field as sfield
 
 CLASSIFICATION = "classification"
@@ -163,7 +172,7 @@ class FitArgs:
 
 _FIT_SCHEMA = pa.schema(
     [
-        sfield("model_name", pa.string(), "Name the model was stored under.", nullable=False),
+        sfield("model_name", pa.string(), "Name the model was stored under ('' if not persisted).", nullable=False),
         sfield("estimator", pa.string(), "Estimator type used.", nullable=False),
         sfield("task", pa.string(), "classification or regression.", nullable=False),
         sfield("n_samples", pa.int64(), "Number of training rows.", nullable=False),
@@ -171,8 +180,70 @@ _FIT_SCHEMA = pa.schema(
         sfield("n_classes", pa.int64(), "Number of classes (NULL for regression)."),
         sfield("train_score", pa.float64(), "In-sample score (accuracy or R^2)."),
         sfield("features", pa.list_(pa.string()), "Ordered feature column names.", nullable=False),
+        sfield("model", pa.binary(), "The fitted model as a self-contained BLOB (estimator + metadata).", nullable=False),
     ]
 )
+
+
+def _fit_and_emit(
+    out: OutputCollector,
+    output_schema: pa.Schema,
+    *,
+    table: pa.Table | None,
+    input_schema: pa.Schema,
+    estimator_label: str,
+    task: str,
+    estimator: Any,
+    model_name: str,
+    target: str,
+    id_col: str,
+    params_dict: dict[str, Any],
+) -> None:
+    """Fit ``estimator`` on the buffered table, persist if named, emit summary + BLOB.
+
+    Shared by the generic ``fit`` and the typed ``fit_<estimator>`` functions.
+    """
+    if table is None or table.num_rows == 0:
+        raise ValueError("fit received no training rows")
+    feats = _features_excluding(input_schema, target, id_col)
+    x, y = _xy(table, feats, target, task)
+    estimator.fit(x, y)
+    train_score = float(estimator.score(x, y))
+    classes = [int(c) for c in estimator.classes_] if task == CLASSIFICATION else None
+
+    meta = ModelMetadata(
+        name=model_name,
+        estimator=estimator_label,
+        task=task,
+        target=target,
+        feature_names=feats,
+        params=params_dict,
+        classes=classes,
+        n_samples=int(table.num_rows),
+        n_features=len(feats),
+        train_score=train_score,
+        sklearn_version=sklearn.__version__,
+        created_at=now_iso(),
+    )
+    if model_name:
+        get_store().save(estimator, meta)
+
+    out.emit(
+        pa.RecordBatch.from_pydict(
+            {
+                "model_name": [model_name],
+                "estimator": [estimator_label],
+                "task": [task],
+                "n_samples": [meta.n_samples],
+                "n_features": [meta.n_features],
+                "n_classes": [len(classes) if classes is not None else None],
+                "train_score": [train_score],
+                "features": [feats],
+                "model": [pack_model(estimator, meta)],
+            },
+            schema=output_schema,
+        )
+    )
 
 
 class FitModel(SinkBuffer[FitArgs, DrainState]):
@@ -197,9 +268,10 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
     @classmethod
     def on_bind(cls, params: BindParams[FitArgs]) -> BindResponse:
         a = params.args
-        if not a.model_name:
-            raise ValueError("fit requires 'model_name' (e.g. model_name := 'my_model')")
-        validate_name(a.model_name)
+        # model_name is optional: the model is always returned as a BLOB; when a
+        # name is given it is also persisted to the registry.
+        if a.model_name:
+            validate_name(a.model_name)
         if not a.target:
             raise ValueError("fit requires 'target' (the label column name, e.g. target := 'label')")
         # Validate estimator + hyperparameters now so errors surface at bind.
@@ -228,51 +300,21 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
             out.finish()
             return
         state.done = True
-
         a = params.args
-        input_schema = input_schema_of(params)
-        feats = _features_excluding(input_schema, a.target, a.id)
         task, estimator = build_estimator(a.estimator, _parse_params(a.params))
-
-        table = cls.buffered_table(params, input_schema)
-        if table is None or table.num_rows == 0:
-            raise ValueError("fit received no training rows")
-
-        x, y = _xy(table, feats, a.target, task)
-        estimator.fit(x, y)
-        train_score = float(estimator.score(x, y))
-        classes = [int(c) for c in estimator.classes_] if task == CLASSIFICATION else None
-
-        meta = ModelMetadata(
-            name=a.model_name,
-            estimator=a.estimator,
+        table = cls.buffered_table(params, input_schema_of(params))
+        _fit_and_emit(
+            out,
+            params.output_schema,
+            table=table,
+            input_schema=input_schema_of(params),
+            estimator_label=a.estimator,
             task=task,
+            estimator=estimator,
+            model_name=a.model_name,
             target=a.target,
-            feature_names=feats,
-            params=_parse_params(a.params),
-            classes=classes,
-            n_samples=int(table.num_rows),
-            n_features=len(feats),
-            train_score=train_score,
-            sklearn_version=sklearn.__version__,
-            created_at=now_iso(),
-        )
-        get_store().save(estimator, meta)
-
-        out.emit(
-            pa.RecordBatch.from_pydict(
-                {
-                    "model_name": [a.model_name],
-                    "estimator": [a.estimator],
-                    "task": [task],
-                    "n_samples": [meta.n_samples],
-                    "n_features": [meta.n_features],
-                    "n_classes": [len(classes) if classes is not None else None],
-                    "train_score": [train_score],
-                    "features": [feats],
-                },
-                schema=params.output_schema,
-            )
+            id_col=a.id,
+            params_dict=_parse_params(a.params),
         )
 
 
@@ -284,7 +326,8 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
 @dataclass(slots=True, frozen=True)
 class PredictArgs:
     data: Annotated[TableInput, Arg(0, doc="Table to score (must contain the model's feature columns).")]
-    model_name: Annotated[str, Arg("model_name", default="", doc="Name of a stored model (required).")]
+    model_name: Annotated[str, Arg("model_name", default="", doc="Name of a model in the registry. Provide this OR model.")]
+    model: Annotated[bytes, Arg("model", default=b"", doc="A model BLOB (as returned by fit). Provide this OR model_name.")]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to carry through.")]
     with_proba: Annotated[bool, Arg("with_proba", default=False, doc="Also emit per-class probabilities (classifiers).")]
 
@@ -316,14 +359,17 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
     @classmethod
     def on_bind(cls, params: BindParams[PredictArgs]) -> BindResponse:
         a = params.args
-        if not a.model_name:
-            raise ValueError("predict requires 'model_name' (e.g. model_name := 'my_model')")
+        if not a.model_name and not a.model:
+            raise ValueError("predict requires either 'model_name' (a registry name) or 'model' (a model BLOB)")
         input_schema = params.bind_call.input_schema
         assert input_schema is not None
-        try:
-            meta = get_store().load_meta(a.model_name)
-        except ModelNotFoundError as exc:
-            raise ValueError(f"model {a.model_name!r} not found in the registry") from exc
+        if a.model_name:
+            try:
+                meta = get_store().load_meta(a.model_name)
+            except ModelNotFoundError as exc:
+                raise ValueError(f"model {a.model_name!r} not found in the registry") from exc
+        else:
+            meta = unpack_meta(a.model)
 
         # Fail fast at bind if the input is missing any feature the model needs.
         # (predict selects features by name, so order doesn't matter and extra
@@ -350,7 +396,8 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
         key = params.init_response.execution_id
         cached = _PREDICT_CACHE.get(key)
         if cached is None:
-            cached = get_store().load(params.args.model_name)
+            a = params.args
+            cached = get_store().load(a.model_name) if a.model_name else unpack_model(a.model)
             _PREDICT_CACHE[key] = cached
         return cached
 
@@ -371,7 +418,7 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
             with contextlib.suppress(Exception):
                 out.client_log(
                     "warning",
-                    f"model {a.model_name!r} was fitted with scikit-learn {meta.sklearn_version}, "
+                    f"model {(a.model_name or '<blob>')!r} was fitted with scikit-learn {meta.sklearn_version}, "
                     f"worker has {sklearn.__version__}; predictions may differ",
                 )
 

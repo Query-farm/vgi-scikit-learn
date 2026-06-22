@@ -12,9 +12,11 @@ Each model is two artifacts:
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
+import struct
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -164,3 +166,43 @@ def set_store(store: ModelStore | None) -> None:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Self-contained model BLOB (estimator + metadata in one value)
+#
+# Layout: 4-byte big-endian metadata-JSON length || metadata JSON || joblib bytes.
+# Lets a fitted model flow through SQL as a single BLOB column and live inside a
+# DuckDB table instead of (or alongside) the on-disk registry. DuckDB BLOB
+# values are capped near 2 GB, so very large ensembles may not fit.
+# ---------------------------------------------------------------------------
+
+
+def pack_model(estimator: Any, meta: ModelMetadata) -> bytes:
+    """Serialize ``(estimator, metadata)`` into one self-describing BLOB."""
+    buf = io.BytesIO()
+    joblib.dump(estimator, buf)
+    meta_bytes = json.dumps(meta.to_dict(), default=str).encode("utf-8")
+    return struct.pack(">I", len(meta_bytes)) + meta_bytes + buf.getvalue()
+
+
+def _split_blob(blob: bytes) -> tuple[bytes, bytes]:
+    if len(blob) < 4:
+        raise ValueError("not a valid sklearn model BLOB (too short)")
+    (n,) = struct.unpack(">I", blob[:4])
+    if len(blob) < 4 + n:
+        raise ValueError("not a valid sklearn model BLOB (truncated metadata)")
+    return blob[4 : 4 + n], blob[4 + n :]
+
+
+def unpack_meta(blob: bytes) -> ModelMetadata:
+    """Read just the metadata from a model BLOB (cheap; no estimator load)."""
+    meta_bytes, _ = _split_blob(blob)
+    return ModelMetadata.from_dict(json.loads(meta_bytes))
+
+
+def unpack_model(blob: bytes) -> tuple[Any, ModelMetadata]:
+    """Read both estimator and metadata from a model BLOB."""
+    meta_bytes, est_bytes = _split_blob(blob)
+    meta = ModelMetadata.from_dict(json.loads(meta_bytes))
+    return joblib.load(io.BytesIO(est_bytes)), meta

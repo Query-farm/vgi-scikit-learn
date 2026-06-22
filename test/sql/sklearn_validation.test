@@ -30,15 +30,18 @@ SELECT * FROM sklearn.pca((SELECT * FROM sklearn.iris()), id := 'sample_id', n_c
 must be numeric
 
 # ---- missing required args -> clear errors ----
-statement error
-SELECT * FROM sklearn.fit((SELECT * FROM tr), estimator := 'logistic_regression', target := 'target');
-----
-requires 'model_name'
-
+# model_name is optional (fit always returns a model BLOB); target is required.
 statement error
 SELECT * FROM sklearn.fit((SELECT * FROM tr), model_name := 'm', estimator := 'logistic_regression');
 ----
 requires 'target'
+
+# fit without model_name succeeds and returns a non-empty model BLOB
+query I
+SELECT octet_length(model) > 0
+FROM sklearn.fit((SELECT * FROM tr), estimator := 'logistic_regression', target := 'target', id := 'sample_id');
+----
+true
 
 # ---- unknown hyperparameter -> lists valid params ----
 statement error

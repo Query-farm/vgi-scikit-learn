@@ -95,20 +95,22 @@ SELECT * FROM sklearn.isolation_forest((SELECT id, x, y FROM points), id := 'id'
 ```
 
 ### Models (registry-backed)
-`fit`, `predict`, `cross_val_predict`, `list_models`, `model_info`, `drop_model`.
+`fit`, `fit_<estimator>` (typed), `predict`, `cross_val_predict`,
+`list_models`, `model_info`, `drop_model`.
 
-Estimators: `logistic_regression`, `random_forest_classifier`/`_regressor`,
-`gradient_boosting_classifier`/`_regressor`,
+Estimators (for generic `fit`'s `estimator :=` arg): `logistic_regression`,
+`random_forest_classifier`/`_regressor`, `gradient_boosting_classifier`/`_regressor`,
 `hist_gradient_boosting_classifier`/`_regressor`, `linear_regression`, `ridge`,
 `lasso`, `svc`, `svr`, `knn_classifier`/`_regressor`,
 `decision_tree_classifier`/`_regressor`, `mlp_classifier`/`_regressor`,
 `gaussian_nb`.
 
 ```sql
--- train + persist
+-- train (generic fit: estimator + JSON hyperparameters)
 SELECT * FROM sklearn.fit(
   (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target FROM sklearn.iris()),
-  model_name := 'iris_rf', estimator := 'random_forest_classifier', target := 'target', id := 'sample_id');
+  model_name := 'iris_rf', estimator := 'random_forest_classifier', target := 'target', id := 'sample_id',
+  params := '{"n_estimators": 300}');
 
 -- predict later (optionally with per-class probabilities)
 SELECT * FROM sklearn.predict((SELECT * FROM new_flowers), model_name := 'iris_rf', id := 'id', with_proba := true);
@@ -123,19 +125,60 @@ SELECT * FROM sklearn.list_models();
 SELECT * FROM sklearn.drop_model('iris_rf');
 ```
 
-## Model registry storage
+### Typed estimator functions (discoverable hyperparameters)
 
-Fitted models are pickled (joblib) plus a JSON metadata sidecar. The store is
-chosen behind the `ModelStore` interface in `vgi_sklearn/registry.py`:
+Each estimator also has a `fit_<estimator>` function that exposes its common
+hyperparameters as **native, typed SQL named arguments** — visible in the
+catalog and DuckDB autocomplete, and type-checked:
+
+```sql
+SELECT * FROM sklearn.fit_random_forest_classifier(
+  (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target FROM sklearn.iris()),
+  model_name := 'iris_rf', target := 'target', id := 'sample_id',
+  n_estimators := 300, max_depth := 8);   -- max_depth := 0 means unlimited
+```
+
+There is one per estimator (`fit_ridge`, `fit_svc`, `fit_mlp_classifier`, ...).
+They behave exactly like `fit`; use the generic `fit` with JSON `params` for any
+hyperparameter not surfaced as a typed argument.
+
+## Model storage: registry or in-database BLOB
+
+Every `fit` / `fit_<estimator>` returns the fitted model as a **`model` BLOB**
+column (estimator + metadata packed together) *and*, when `model_name` is given,
+persists it to the registry. So `model_name` is optional — you choose where the
+model lives:
+
+```sql
+-- keep models inside the database, in a regular table
+CREATE TABLE models AS
+SELECT 'iris_rf' AS name, model
+FROM sklearn.fit_random_forest_classifier(
+  (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target FROM sklearn.iris()),
+  target := 'target', id := 'sample_id');
+
+-- predict from a BLOB. A table function allows only one subquery parameter
+-- (the data), so pass the model scalar via a session variable:
+SET VARIABLE m = (SELECT model FROM models WHERE name = 'iris_rf');
+SELECT * FROM sklearn.predict(
+  (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm FROM sklearn.iris()),
+  model := getvariable('m'), id := 'sample_id');
+```
+
+`predict` takes **either** `model_name :=` (registry) **or** `model :=` (a BLOB).
+DuckDB BLOBs are capped near 2 GB, so very large ensembles may not fit in-DB.
+
+The named registry sits behind the `ModelStore` interface in
+`vgi_sklearn/registry.py`:
 
 - **Local disk** (default): `SKLEARN_MODELS_DIR` (default `./models`).
 - **S3 / Cloudflare R2**: not yet implemented — `get_store()` is the single seam
   where an `S3Store` drops in.
 
 On Fly.io the local store is backed by a mounted volume (see `fly.toml`) so
-models survive machine restarts. `predict` records the scikit-learn version used
-to fit and logs a warning (visible in `duckdb_logs()`) if the worker's version
-differs.
+named models survive machine restarts. `predict` records the scikit-learn version
+used to fit and logs a warning (visible in `duckdb_logs()`) if the worker's
+version differs.
 
 ## Local development
 

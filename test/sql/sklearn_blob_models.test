@@ -1,0 +1,73 @@
+# name: test/sql/sklearn_blob_models.test
+# description: In-database BLOB models — fit returns a model, predict reads it
+# group: [vgi_sklearn]
+
+require-env VGI_SKLEARN_WORKER
+
+require vgi
+
+require httpfs
+
+statement ok
+ATTACH 'sklearn' AS sklearn (TYPE vgi, LOCATION '${VGI_SKLEARN_WORKER}');
+
+statement ok
+CREATE TEMP VIEW tr AS
+  SELECT sample_id, sepal_length_cm AS f1, sepal_width_cm AS f2,
+         petal_length_cm AS f3, petal_width_cm AS f4, target
+  FROM sklearn.iris();
+
+# fit always returns a self-contained model BLOB (no registry entry needed)
+statement ok
+CREATE TEMP TABLE models AS
+SELECT 'iris_lr' AS name,
+       model
+FROM sklearn.fit((SELECT * FROM tr), estimator := 'logistic_regression', target := 'target', id := 'sample_id');
+
+query I
+SELECT octet_length(model) > 0 FROM models;
+----
+true
+
+# predict from the stored BLOB. A table function allows only one subquery
+# parameter (the data), so the model scalar is passed via a session VARIABLE.
+statement ok
+SET VARIABLE m = (SELECT model FROM models WHERE name = 'iris_lr');
+
+query I
+SELECT count(*) FROM sklearn.predict((SELECT * FROM tr), model := getvariable('m'), id := 'sample_id');
+----
+150
+
+# BLOB-model predictions equal those of the same model persisted by name
+statement ok
+SELECT * FROM sklearn.fit((SELECT * FROM tr), model_name := 'iris_lr_reg',
+                          estimator := 'logistic_regression', target := 'target', id := 'sample_id');
+
+query I
+SELECT count(*) FROM (
+  SELECT sample_id, prediction FROM sklearn.predict((SELECT * FROM tr), model := getvariable('m'), id := 'sample_id')
+  EXCEPT
+  SELECT sample_id, prediction FROM sklearn.predict((SELECT * FROM tr), model_name := 'iris_lr_reg', id := 'sample_id')
+);
+----
+0
+
+# per-class probabilities work from a BLOB too (id + prediction + 3 classes)
+query I
+SELECT count(*) FROM (DESCRIBE
+  SELECT * FROM sklearn.predict((SELECT * FROM tr), model := getvariable('m'), id := 'sample_id', with_proba := true));
+----
+5
+
+# neither model_name nor model -> clear error
+statement error
+SELECT * FROM sklearn.predict((SELECT * FROM tr), id := 'sample_id');
+----
+either 'model_name'
+
+statement ok
+SELECT * FROM sklearn.drop_model('iris_lr_reg');
+
+statement ok
+DETACH sklearn;

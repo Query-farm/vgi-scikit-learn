@@ -21,9 +21,10 @@ vgi_sklearn/
   metrics.py          metric aggregates over (y_true, y_pred)
   table_metrics.py    confusion_matrix / silhouette_score (buffering, table input)
   transforms.py       unsupervised fit_transform (buffering)
-  models.py           fit / predict / cross_val_predict + registry mgmt
-  registry.py         ModelStore interface + LocalDiskStore (S3/R2 seam)
-  buffering.py        shared sink/combine/serialize/matrix helpers
+  models.py           generic fit / predict / cross_val_predict + registry mgmt
+  typed_models.py     generated fit_<estimator> functions with typed hyperparams
+  registry.py         ModelStore + LocalDiskStore (S3/R2 seam) + model-BLOB pack/unpack
+  buffering.py        shared sink/combine/serialize/matrix helpers (numeric validation)
   schema_utils.py     pa.Field comment helper, name sanitisation, NoArgs
 tests/                pytest (in-process harness in tests/harness.py)
 test/sql/*.test       DuckDB sqllogictest — the authoritative integration tests
@@ -42,8 +43,26 @@ To add functions: implement in the relevant `vgi_sklearn/*.py`, export a
 | Score a stream with an already-fit model | `TableInOutGenerator` | `models.PredictModel` |
 
 Conventions for transform/fit/predict: input relation is X via a `(SELECT ...)`
-subquery (Arg(0)); name `target` (features = the rest) and an optional `id`
-passthrough; hyperparameters as a JSON-string arg.
+subquery (Arg(0)); name `target` (features = the rest, must be numeric) and an
+optional `id` passthrough; generic `fit` takes hyperparameters as a JSON-string
+arg, while `fit_<estimator>` exposes them as typed named args.
+
+## Models: registry + BLOB + typed functions
+
+- **fit always returns a `model` BLOB** (estimator + metadata packed by
+  `registry.pack_model`) and persists to the registry only if `model_name` is
+  given (so `model_name` is optional). `predict` takes **either** `model_name :=`
+  or `model :=` (a BLOB); `registry.unpack_meta` reads metadata at bind,
+  `unpack_model` loads the estimator at process.
+- **Typed `fit_<estimator>` functions** are generated in `typed_models.py` from
+  the `_HPARAMS` spec via `types.new_class(name, (SinkBuffer[args, DrainState],),
+  ...)` — plain `type()` can't resolve the subscripted-generic base. Each shares
+  `models._fit_and_emit`. To add/adjust hyperparameters, edit `_HPARAMS`; the
+  `test_typed_params_are_valid_for_estimator` test guards that every exposed
+  param is real for its estimator. `max_depth := 0` maps to `None` (unlimited);
+  mlp `hidden_units` maps to `hidden_layer_sizes=(n,)`.
+- **predict aligns features by name** (reorder-safe, extra columns ignored);
+  missing/non-numeric feature columns raise clear errors at bind.
 
 ## Sharp edges (learned the hard way — read before debugging)
 
@@ -75,6 +94,20 @@ passthrough; hyperparameters as a JSON-string arg.
    (`>=0.20.4`). Worked around with `override-dependencies` in the PEP 723
    headers, `--override` in `make venv`, and a `sed` in the Dockerfile. Bumping
    local `vgi-rpc` to ≥0.20.4 would let these be removed.
+10. **A table function gets at most ONE subquery parameter.** That slot is the
+    table input `(SELECT ...)`. You cannot also pass `model := (SELECT model
+    FROM ...)` — DuckDB errors "Table function can have at most one subquery
+    parameter". To pass a runtime BLOB/scalar, stash it in a session variable
+    and read it back as a scalar: `SET VARIABLE m = (SELECT ...)` then
+    `predict(..., model := getvariable('m'))`. `:=` and `=>` are equivalent
+    named-arg syntaxes; docs use `:=`.
+11. **Generating VGI function classes dynamically:** use
+    `types.new_class(name, (SinkBuffer[Args, State],), {}, lambda ns:
+    ns.update(namespace))`. Plain `type(name, (Base[...],), ns)` raises
+    "type() doesn't support MRO entry resolution" for subscripted-generic
+    bases. Build the args dataclass with `dataclasses.make_dataclass` using
+    `Annotated[t, Arg(...)]` field types; set `FunctionArguments` in the
+    namespace explicitly.
 
 ## Testing
 
