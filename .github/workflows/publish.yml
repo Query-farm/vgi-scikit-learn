@@ -1,0 +1,37 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+#
+# Token-based publishing (no OIDC / trusted publishing). The PyPI API token is
+# stored as the `PYPI_API_TOKEN` repository secret and passed to `uv publish`
+# via UV_PUBLISH_TOKEN (uv uses the `__token__` username automatically).
+#
+# Publishes when a GitHub Release is published; `workflow_dispatch` allows a
+# manual run from the Actions tab. The full CI suite (unit tests + the vgi
+# extension integration suite) must pass before anything is uploaded.
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Run the same unit + extension-integration suite as on push/PR, so a release
+  # can't publish without the worker passing against the real vgi extension.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - name: Build wheel and sdist
+        run: uv build
+      - name: Publish to PyPI
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: uv publish

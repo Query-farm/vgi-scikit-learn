@@ -11,3 +11,4 @@ models/
 *.coverage
 .coverage
 .test-models/
+dist/

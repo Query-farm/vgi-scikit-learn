@@ -14,9 +14,8 @@ checkouts; modeled on `~/Development/vgi-trains-python-fly`.
 ## Layout
 
 ```
-sklearn_worker.py     entry point: builds the `sklearn` Catalog, SklearnWorker, main()
-serve.py              HTTP entry point (injects --http into Worker.main())
 vgi_sklearn/
+  worker.py           builds the `sklearn` Catalog + SklearnWorker; main()/main_http() entry points
   datasets.py         dataset table functions (toy, generators, california_housing)
   metrics.py          metric aggregates over (y_true, y_pred)
   table_metrics.py    confusion_matrix / silhouette_score (buffering, table input)
@@ -26,12 +25,24 @@ vgi_sklearn/
   registry.py         ModelStore + LocalDiskStore (S3/R2 seam) + model-BLOB pack/unpack
   buffering.py        shared sink/combine/serialize/matrix helpers (numeric validation)
   schema_utils.py     pa.Field comment helper, name sanitisation, NoArgs
+sklearn_worker.py     repo-root stdio shim over vgi_sklearn.worker (uv run / Fly / tests)
+serve.py              repo-root HTTP shim over vgi_sklearn.worker (Fly / tests)
 tests/                pytest (in-process harness in tests/harness.py)
 test/sql/*.test       DuckDB sqllogictest — the authoritative integration tests
 ```
 
 To add functions: implement in the relevant `vgi_sklearn/*.py`, export a
-`*_FUNCTIONS` list, and splice it into `_FUNCTIONS` in `sklearn_worker.py`.
+`*_FUNCTIONS` list, and splice it into `_FUNCTIONS` in `vgi_sklearn/worker.py`.
+
+**Entry points / packaging.** Console scripts (`vgi-sklearn`,
+`vgi-sklearn-http`) point at `vgi_sklearn.worker:main` / `:main_http` — *inside
+the package*, so they ship in the wheel. The repo-root `sklearn_worker.py` /
+`serve.py` are thin shims for `uv run` / the Fly container / `import` in tests;
+they are deliberately NOT in the wheel (only the `vgi_sklearn` package is). Don't
+point entry points back at the root modules — that was a packaging bug (broken
+console scripts on `pip install`). PyPI publish is `publish.yml` (GitHub Release
+→ CI → `uv build && uv publish`); bump `version` in `pyproject.toml` before
+tagging.
 
 ## Which VGI primitive for which job
 

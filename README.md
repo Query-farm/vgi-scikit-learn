@@ -238,9 +238,8 @@ fly volumes create sklearn_models --size 1 --region iad   # one-time, for the re
 ## Layout
 
 ```
-sklearn_worker.py      entry point; assembles the `sklearn` catalog
-serve.py               HTTP entry point (Fly.io)
 vgi_sklearn/
+  worker.py            assembles the `sklearn` catalog; main() / main_http() entry points
   datasets.py          dataset table functions
   metrics.py           metric aggregates
   table_metrics.py     confusion_matrix / silhouette_score
@@ -250,7 +249,23 @@ vgi_sklearn/
   registry.py          ModelStore (local disk; S3/R2 seam) + model-BLOB pack/unpack
   buffering.py         shared sink/combine/matrix helpers
   schema_utils.py      Arrow schema helpers
+sklearn_worker.py      dev/Fly stdio shim over vgi_sklearn.worker (for `uv run`)
+serve.py               dev/Fly HTTP shim over vgi_sklearn.worker
 ```
+
+## Installing & publishing
+
+Install from PyPI (provides the `vgi-sklearn` / `vgi-sklearn-http` console
+scripts):
+
+```sh
+pip install vgi-sklearn        # or: uvx vgi-sklearn
+```
+
+Releases publish to PyPI via [`.github/workflows/publish.yml`](.github/workflows/publish.yml):
+publishing a GitHub Release runs the full CI suite, then `uv build && uv publish`
+(token in the `PYPI_API_TOKEN` repo secret). Bump `version` in `pyproject.toml`
+before tagging.
 
 ## License
 

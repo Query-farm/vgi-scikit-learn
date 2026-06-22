@@ -16,24 +16,21 @@
 # # Use the local vgi-rpc checkout even if it lags vgi-python's pinned lower bound.
 # override-dependencies = ["vgi-rpc>=0.20.3"]
 # ///
-"""HTTP entrypoint for the scikit-learn worker (used by Fly.io).
+"""HTTP entry shim for the scikit-learn VGI worker (used by the Fly.io container).
 
-Forces the worker's CLI into HTTP mode (``Worker.main()`` serves stdio by
-default) so callers only pass ``--host``/``--port``.
+Forces the worker CLI into HTTP mode. The implementation lives in
+``vgi_sklearn.worker``; installed users invoke the ``vgi-sklearn-http`` console
+script (which points at ``vgi_sklearn.worker:main_http``) instead.
 """
 
-import sys
+from vgi_sklearn.worker import SklearnWorker, main_http
 
-from sklearn_worker import SklearnWorker
+__all__ = ["SklearnWorker", "main_http"]
 
 
 def main() -> None:
-    """Run the worker over HTTP (injects ``--http`` into the worker CLI)."""
-    argv = sys.argv[1:]
-    if "--http" not in argv:
-        argv = ["--http", *argv]
-    sys.argv = [sys.argv[0], *argv]
-    SklearnWorker.main()
+    """Run the worker over HTTP."""
+    main_http()
 
 
 if __name__ == "__main__":

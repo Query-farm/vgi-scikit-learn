@@ -31,8 +31,8 @@ dependencies = [
 # `vgi-sklearn-http` runs the HTTP server. Once installed you can launch either
 # directly, e.g. `uvx vgi-sklearn`.
 [project.scripts]
-vgi-sklearn = "sklearn_worker:main"
-vgi-sklearn-http = "serve:main"
+vgi-sklearn = "vgi_sklearn.worker:main"
+vgi-sklearn-http = "vgi_sklearn.worker:main_http"
 
 [project.urls]
 Homepage = "https://query.farm"
@@ -43,10 +43,11 @@ Issues = "https://github.com/Query-farm/vgi-scikit-learn/issues"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-# The worker is the `vgi_sklearn` package plus two top-level entry modules.
+# The installable worker is the `vgi_sklearn` package (entry points live in
+# vgi_sklearn.worker). The repo-root sklearn_worker.py / serve.py are dev/Fly
+# shims and intentionally not shipped in the wheel.
 [tool.hatch.build.targets.wheel]
 packages = ["vgi_sklearn"]
-include = ["sklearn_worker.py", "serve.py"]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -56,6 +57,7 @@ include = [
     "conftest.py",
     "tests/",
     "test/",
+    "ci/",
     "README.md",
     "CLAUDE.md",
     "LICENSE",
@@ -66,6 +68,7 @@ dev = [
     "pytest",
     "pyarrow",
     "ruff",
+    "pydoclint",
 ]
 
 [tool.pytest.ini_options]
@@ -85,3 +88,21 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E402"]
+
+[tool.pydoclint]
+# Docstring consistency gate (complements ruff's `D` rules, which only check
+# docstring *shape*, not whether documented args/attributes match the code).
+# Mirrors the vgi-python settings. Run via `uv run pydoclint vgi_sklearn/
+# sklearn_worker.py serve.py`; also enforced inside the pytest suite by
+# tests/test_docstrings.py.
+style = "google"
+# Types live in signatures, not docstrings (Google style).
+arg_type_hints_in_docstring = false
+check_return_types = false
+check_yield_types = false
+# Validate that an `Attributes:` section matches the actual dataclass fields.
+check_class_attributes = true
+# Raises are documented indirectly; don't gate on DOC5xx.
+skip_checking_raises = true
+# Document constructor params in the class docstring, not __init__.
+allow_init_docstring = true
