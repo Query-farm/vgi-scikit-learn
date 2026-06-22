@@ -97,10 +97,14 @@ arg, while `fit_<estimator>` exposes them as typed named args.
 8. **Distribution rename:** the package is dist `vgi-python` (import `vgi`).
    PEP 723 headers use `vgi-python = { path = ... }`; the Docker wheel glob is
    `vgi_python-*.whl`. The older `vgi`-based assumptions from vgi-trains break.
-9. **Local source skew:** local `vgi-rpc` (0.20.3) lags vgi-python's pin
-   (`>=0.20.4`). Worked around with `override-dependencies` in the PEP 723
-   headers, `--override` in `make venv`, and a `sed` in the Dockerfile. Bumping
-   local `vgi-rpc` to ≥0.20.4 would let these be removed.
+9. **Local source skew (local-checkout dev only):** the packaged/CI/PyPI path
+   is clean — `vgi-python` 0.8.1 and `vgi-rpc` 0.20.4 are both on PyPI, so
+   `pyproject.toml` / `uv.lock` resolve without any override. The skew only bites
+   when building against the *local* `~/Development/vgi-rpc` checkout (0.20.3),
+   which lags vgi-python's `>=0.20.4` pin: worked around with
+   `override-dependencies` in the PEP 723 headers, `--override` in `make venv`,
+   and a `sed` in the Dockerfile. Bumping the local `vgi-rpc` checkout to ≥0.20.4
+   would let those be removed.
 10. **A table function gets at most ONE subquery parameter.** That slot is the
     table input `(SELECT ...)`. You cannot also pass `model := (SELECT model
     FROM ...)` — DuckDB errors "Table function can have at most one subquery
@@ -116,20 +120,37 @@ arg, while `fit_<estimator>` exposes them as typed named args.
     `Annotated[t, Arg(...)]` field types; set `FunctionArguments` in the
     namespace explicitly.
 
+## Packaging & CI
+
+The repo is an installable package (`pyproject.toml`, hatchling, `uv.lock`):
+`uv sync` resolves PyPI `vgi-python[http]` + scikit-learn + skops and exposes
+the `vgi-sklearn` (stdio) and `vgi-sklearn-http` console scripts. Lint/format is
+ruff (`uvx ruff check .` / `ruff format`); config in `pyproject.toml`. GitHub
+Actions (`.github/workflows/ci.yml` + `ci/`) runs the unit + SQL suites on
+Linux/macOS/Windows against the **signed community `vgi` extension** via a
+prebuilt `haybarn-unittest` — no C++ build (mirrors `vgi-easter`; see
+`ci/README.md`). Keep PyPI deps in `pyproject.toml` in sync with the PEP 723
+headers and the Dockerfile `pip install` line when adding a dependency.
+
 ## Testing
 
 ```sh
-make venv          # .venv with vgi + scikit-learn from local checkouts
-make pytest        # in-process unit tests (fast; uses tests/harness.py)
-make test-stdio    # SQL tests, worker as subprocess  (authoritative)
-make test-http     # SQL tests against a local HTTP server
+uv sync && uv run pytest tests/ -q   # unit tests against PyPI deps (CI's unit job)
+make venv && make pytest             # unit tests against local vgi checkouts
+make test-stdio                      # SQL tests, worker as subprocess (authoritative)
+make test-http                       # SQL tests against a local HTTP server
 ```
 
 - **SQL tests are authoritative.** Unit tests call classmethods directly and
   can pass while the real RPC path is broken — that's exactly how the aggregate
-  state-persistence bug (edge #1) slipped past pytest. Always run `test-stdio`.
-- SQL tests need DuckDB's `unittest` runner built with the VGI extension at
-  `$(VGI_BUILD_DIR)/test/unittest`.
+  state-persistence bug (edge #1) slipped past pytest. Always run the SQL suite.
+- SQL tests need a sqllogictest runner with the VGI extension: either a DuckDB
+  `unittest` built with vgi at `$(VGI_BUILD_DIR)/test/unittest`, or (what CI
+  uses) a standalone `haybarn-unittest` + `INSTALL vgi FROM community`.
+- For fast local probing with *real* error messages, `pip install haybarn` and
+  drive it from Python (`con.execute("INSTALL vgi FROM community; LOAD vgi")`,
+  `ATTACH ... LOCATION 'uv run sklearn_worker.py'`) — far better than reading
+  sqllogictest diffs while iterating.
 - `make test-stdio` / `test-http` point `SKLEARN_MODELS_DIR` at an isolated
   `.test-models/` so the registry tests don't pollute `./models`.
 
@@ -148,8 +169,8 @@ The Docker smoke test verifies imports + `/health`.
 ## Model registry
 
 `registry.get_store()` is the single seam selecting the backend.
-`LocalDiskStore` (joblib pickle + JSON metadata, root from `SKLEARN_MODELS_DIR`,
-default `./models`) is the only impl today; an `S3Store` for S3/R2 is the
-planned next backend and drops in here without touching `models.py`. `predict`
-warns via `duckdb_logs()` if the worker's scikit-learn version differs from the
-one a model was fitted with.
+`LocalDiskStore` (skops `.skops` artifact + JSON metadata sidecar, root from
+`SKLEARN_MODELS_DIR`, default `./models`) is the only impl today; an `S3Store`
+for S3/R2 is the planned next backend and drops in here without touching
+`models.py`. `predict` warns via `duckdb_logs()` if the worker's scikit-learn
+version differs from the one a model was fitted with.
