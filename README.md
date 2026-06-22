@@ -119,12 +119,14 @@ Available estimators (each is `sklearn.fit_<name>`):
 
 | Family | Functions | Common typed args |
 | --- | --- | --- |
-| Linear | `logistic_regression`, `linear_regression`, `ridge`, `lasso` | `C`, `alpha`, `max_iter`, `fit_intercept`, `penalty`, `solver` |
-| Trees / ensembles | `decision_tree_classifier`/`_regressor`, `random_forest_classifier`/`_regressor`, `gradient_boosting_classifier`/`_regressor`, `hist_gradient_boosting_classifier`/`_regressor` | `n_estimators`, `max_depth`, `learning_rate`, `min_samples_split`, `subsample`, `random_state` |
-| SVM | `svc`, `svr` | `C`, `kernel`, `gamma`, `degree`, `epsilon` |
+| Linear | `logistic_regression`, `linear_regression`, `ridge`, `lasso`, `elastic_net`, `ridge_classifier`, `sgd_classifier`/`_regressor`, `bayesian_ridge`, `huber_regressor`, `quantile_regressor` | `C`, `alpha`, `l1_ratio`, `max_iter`, `fit_intercept`, `penalty`, `solver`, `loss` |
+| GLMs | `poisson_regressor`, `gamma_regressor`, `tweedie_regressor` | `alpha`, `power`, `max_iter`, `fit_intercept` |
+| Trees / ensembles | `decision_tree_classifier`/`_regressor`, `random_forest_classifier`/`_regressor`, `extra_trees_classifier`/`_regressor`, `gradient_boosting_classifier`/`_regressor`, `hist_gradient_boosting_classifier`/`_regressor`, `ada_boost_classifier`/`_regressor`, `bagging_classifier`/`_regressor` | `n_estimators`, `max_depth`, `learning_rate`, `min_samples_split`, `subsample`, `max_samples`, `random_state` |
+| SVM | `svc`, `svr`, `linear_svc`, `linear_svr` | `C`, `kernel`, `gamma`, `degree`, `epsilon`, `loss` |
 | Neighbors | `knn_classifier`, `knn_regressor` | `n_neighbors`, `weights`, `p` |
 | Neural net | `mlp_classifier`, `mlp_regressor` | `hidden_units`, `alpha`, `max_iter`, `learning_rate_init` |
-| Naive Bayes | `gaussian_nb` | `var_smoothing` |
+| Naive Bayes | `gaussian_nb`, `multinomial_nb`, `bernoulli_nb`, `complement_nb` | `var_smoothing`, `alpha`, `fit_prior`, `binarize` |
+| Discriminant | `lda`, `qda` | `solver`, `tol`, `reg_param` |
 
 > Need a hyperparameter that isn't exposed as a typed argument? The generic
 > `sklearn.fit((SELECT ...), estimator := 'ridge', target := 'y', params := '{"alpha": 0.3, "solver": "svd"}')`
@@ -357,17 +359,29 @@ SELECT * FROM sklearn.make_blobs(n_samples := 300, centers := 4);   -- synthetic
 `predict_one` / `predict_class_one` / `predict_proba_one` (scalars — per-row,
 by-name features).
 
-**Transforms** (table in, `id` passthrough): `standard_scaler`, `minmax_scaler`,
-`robust_scaler`, `normalizer`, `simple_imputer`, `pca`, `truncated_svd`,
-`kmeans`, `dbscan`, `isolation_forest`, `ordinal_encoder`, `one_hot_encoder`.
+**Transforms** (table in, `id` passthrough):
+- Scaling / preprocessing — `standard_scaler`, `minmax_scaler`, `robust_scaler`,
+  `maxabs_scaler`, `normalizer`, `power_transformer`, `quantile_transformer`,
+  `binarizer`, `kbins_discretizer`, `simple_imputer`
+- Encoding — `ordinal_encoder`, `one_hot_encoder`
+- Decomposition / manifold — `pca`, `truncated_svd`, `tsne`, `isomap`,
+  `spectral_embedding`, `mds`
+- Clustering — `kmeans`, `minibatch_kmeans`, `dbscan`, `optics`,
+  `agglomerative_clustering`, `spectral_clustering`, `mean_shift`, `birch`,
+  `gaussian_mixture`
+- Outlier detection — `isolation_forest`, `local_outlier_factor`,
+  `one_class_svm`, `elliptic_envelope`
 
 **Metric aggregates** over `(y_true, y_pred)`:
 - Regression — `mean_squared_error`, `root_mean_squared_error`,
   `mean_absolute_error`, `r2_score`, `explained_variance_score`,
-  `mean_absolute_percentage_error`, `max_error`, `median_absolute_error`
+  `mean_absolute_percentage_error`, `max_error`, `median_absolute_error`,
+  `mean_squared_log_error`, `mean_pinball_loss`
 - Classification — `accuracy_score`, `precision_score`, `recall_score`,
-  `f1_score`, `balanced_accuracy_score`, `matthews_corrcoef`, `cohen_kappa_score`
-- Probability / ranking — `roc_auc_score`, `average_precision_score`, `log_loss`
+  `f1_score`, `balanced_accuracy_score`, `matthews_corrcoef`,
+  `cohen_kappa_score`, `jaccard_score`, `hamming_loss`, `zero_one_loss`
+- Probability / ranking — `roc_auc_score`, `average_precision_score`,
+  `log_loss`, `brier_score_loss`
 - Clustering — `adjusted_rand_score`, `normalized_mutual_info_score`,
   `adjusted_mutual_info_score`, `homogeneity_score`, `completeness_score`,
   `v_measure_score`, `fowlkes_mallows_score`

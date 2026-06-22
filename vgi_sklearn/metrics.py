@@ -213,6 +213,30 @@ class MedianAbsoluteError(_BufferedMetric):
         return skm.median_absolute_error(y_true, y_pred)
 
 
+class MeanSquaredLogError(_BufferedMetric):
+    class Meta:
+        name = "mean_squared_log_error"
+        description = "Mean squared logarithmic error (regression; non-negative values)"
+        categories = ["metrics", "regression"]
+        examples = _example("mean_squared_log_error")
+
+    @classmethod
+    def compute_metric(cls, y_true: np.ndarray, y_pred: np.ndarray) -> float:
+        return skm.mean_squared_log_error(y_true, y_pred)
+
+
+class MeanPinballLoss(_BufferedMetric):
+    class Meta:
+        name = "mean_pinball_loss"
+        description = "Mean pinball loss for the median quantile (regression)"
+        categories = ["metrics", "regression"]
+        examples = _example("mean_pinball_loss")
+
+    @classmethod
+    def compute_metric(cls, y_true: np.ndarray, y_pred: np.ndarray) -> float:
+        return skm.mean_pinball_loss(y_true, y_pred)
+
+
 # ===========================================================================
 # Classification metrics (numeric labels; macro-averaged where applicable)
 # ===========================================================================
@@ -302,6 +326,42 @@ class CohenKappaScore(_BufferedMetric):
         return skm.cohen_kappa_score(_as_int(y_true), _as_int(y_pred))
 
 
+class JaccardScore(_BufferedMetric):
+    class Meta:
+        name = "jaccard_score"
+        description = "Jaccard similarity coefficient (macro-averaged for multiclass)"
+        categories = ["metrics", "classification"]
+        examples = _example("jaccard_score")
+
+    @classmethod
+    def compute_metric(cls, y_true: np.ndarray, y_pred: np.ndarray) -> float:
+        return skm.jaccard_score(_as_int(y_true), _as_int(y_pred), average="macro", zero_division=0)
+
+
+class HammingLoss(_BufferedMetric):
+    class Meta:
+        name = "hamming_loss"
+        description = "Hamming loss (fraction of labels predicted incorrectly)"
+        categories = ["metrics", "classification"]
+        examples = _example("hamming_loss")
+
+    @classmethod
+    def compute_metric(cls, y_true: np.ndarray, y_pred: np.ndarray) -> float:
+        return skm.hamming_loss(_as_int(y_true), _as_int(y_pred))
+
+
+class ZeroOneLoss(_BufferedMetric):
+    class Meta:
+        name = "zero_one_loss"
+        description = "Zero-one classification loss (fraction of misclassifications)"
+        categories = ["metrics", "classification"]
+        examples = _example("zero_one_loss")
+
+    @classmethod
+    def compute_metric(cls, y_true: np.ndarray, y_pred: np.ndarray) -> float:
+        return skm.zero_one_loss(_as_int(y_true), _as_int(y_pred))
+
+
 # ===========================================================================
 # Probability / score-based metrics (y_pred is a score or probability)
 # ===========================================================================
@@ -341,6 +401,18 @@ class LogLoss(_BufferedMetric):
     @classmethod
     def compute_metric(cls, y_true: np.ndarray, y_pred: np.ndarray) -> float:
         return skm.log_loss(_as_int(y_true), np.clip(y_pred, 1e-15, 1 - 1e-15), labels=[0, 1])
+
+
+class BrierScoreLoss(_BufferedMetric):
+    class Meta:
+        name = "brier_score_loss"
+        description = "Brier score loss (calibration of binary probabilities; y_pred = P(class 1))"
+        categories = ["metrics", "classification"]
+        examples = _example("brier_score_loss")
+
+    @classmethod
+    def compute_metric(cls, y_true: np.ndarray, y_pred: np.ndarray) -> float:
+        return skm.brier_score_loss(_as_int(y_true), y_pred)
 
 
 # ===========================================================================
@@ -442,6 +514,8 @@ METRIC_FUNCTIONS: list[type] = [
     MeanAbsolutePercentageError,
     MaxError,
     MedianAbsoluteError,
+    MeanSquaredLogError,
+    MeanPinballLoss,
     # classification
     AccuracyScore,
     PrecisionScore,
@@ -450,10 +524,14 @@ METRIC_FUNCTIONS: list[type] = [
     BalancedAccuracyScore,
     MatthewsCorrCoef,
     CohenKappaScore,
+    JaccardScore,
+    HammingLoss,
+    ZeroOneLoss,
     # probability / ranking
     RocAucScore,
     AveragePrecisionScore,
     LogLoss,
+    BrierScoreLoss,
     # clustering comparison
     AdjustedRandScore,
     NormalizedMutualInfoScore,

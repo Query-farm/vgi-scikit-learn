@@ -134,6 +134,121 @@ _HPARAMS: dict[str, list[_HP]] = {
     "mlp_classifier": _MLP,
     "mlp_regressor": _MLP,
     "gaussian_nb": [_HP("var_smoothing", float, 1e-9, "Variance smoothing added for stability.")],
+    # --- additional classifiers ---
+    "sgd_classifier": [
+        _HP("loss", str, "hinge", "Loss function ('hinge', 'log_loss', 'modified_huber')."),
+        _HP("alpha", float, 0.0001, "Regularization strength."),
+        _HP("penalty", str, "l2", "Penalty ('l2', 'l1', 'elasticnet')."),
+        _HP("max_iter", int, 1000, "Max passes over the training data."),
+        _HP("random_state", int, 0, "Random seed."),
+    ],
+    "ridge_classifier": [
+        _HP("alpha", float, 1.0, "Regularization strength."),
+        _HP("fit_intercept", bool, True, "Whether to fit an intercept."),
+        _HP("solver", str, "auto", "Solver to use."),
+    ],
+    "extra_trees_classifier": _RF,
+    "extra_trees_regressor": _RF,
+    "ada_boost_classifier": [
+        _HP("n_estimators", int, 50, "Number of boosting stages."),
+        _HP("learning_rate", float, 1.0, "Weight applied to each classifier."),
+        _HP("random_state", int, 0, "Random seed."),
+    ],
+    "ada_boost_regressor": [
+        _HP("n_estimators", int, 50, "Number of boosting stages."),
+        _HP("learning_rate", float, 1.0, "Weight applied to each regressor."),
+        _HP("random_state", int, 0, "Random seed."),
+    ],
+    "bagging_classifier": [
+        _HP("n_estimators", int, 10, "Number of base estimators."),
+        _HP("max_samples", float, 1.0, "Fraction of samples per base estimator."),
+        _HP("max_features", float, 1.0, "Fraction of features per base estimator."),
+        _HP("random_state", int, 0, "Random seed."),
+    ],
+    "bagging_regressor": [
+        _HP("n_estimators", int, 10, "Number of base estimators."),
+        _HP("max_samples", float, 1.0, "Fraction of samples per base estimator."),
+        _HP("max_features", float, 1.0, "Fraction of features per base estimator."),
+        _HP("random_state", int, 0, "Random seed."),
+    ],
+    "linear_svc": [
+        _HP("C", float, 1.0, "Regularization strength."),
+        _HP("loss", str, "squared_hinge", "Loss ('hinge' or 'squared_hinge')."),
+        _HP("max_iter", int, 1000, "Max iterations."),
+        _HP("random_state", int, 0, "Random seed."),
+    ],
+    "multinomial_nb": [
+        _HP("alpha", float, 1.0, "Additive (Laplace) smoothing."),
+        _HP("fit_prior", bool, True, "Whether to learn class prior probabilities."),
+    ],
+    "bernoulli_nb": [
+        _HP("alpha", float, 1.0, "Additive (Laplace) smoothing."),
+        _HP("binarize", float, 0.0, "Threshold for binarizing features."),
+        _HP("fit_prior", bool, True, "Whether to learn class prior probabilities."),
+    ],
+    "complement_nb": [
+        _HP("alpha", float, 1.0, "Additive (Laplace) smoothing."),
+        _HP("norm", bool, False, "Whether to normalize the weights."),
+        _HP("fit_prior", bool, True, "Whether to learn class prior probabilities."),
+    ],
+    "lda": [
+        _HP("solver", str, "svd", "Solver ('svd', 'lsqr', 'eigen')."),
+        _HP("tol", float, 1e-4, "Threshold for rank estimation (svd)."),
+    ],
+    "qda": [
+        _HP("reg_param", float, 0.0, "Regularization of the per-class covariance."),
+        _HP("tol", float, 1e-4, "Threshold for rank estimation."),
+    ],
+    # --- additional regressors ---
+    "elastic_net": [
+        _HP("alpha", float, 1.0, "Regularization strength."),
+        _HP("l1_ratio", float, 0.5, "Mix of L1/L2 (0=ridge, 1=lasso)."),
+        _HP("max_iter", int, 1000, "Max iterations."),
+        _HP("fit_intercept", bool, True, "Whether to fit an intercept."),
+    ],
+    "sgd_regressor": [
+        _HP("loss", str, "squared_error", "Loss ('squared_error', 'huber', 'epsilon_insensitive')."),
+        _HP("alpha", float, 0.0001, "Regularization strength."),
+        _HP("penalty", str, "l2", "Penalty ('l2', 'l1', 'elasticnet')."),
+        _HP("max_iter", int, 1000, "Max passes over the training data."),
+        _HP("random_state", int, 0, "Random seed."),
+    ],
+    "linear_svr": [
+        _HP("C", float, 1.0, "Regularization strength."),
+        _HP("epsilon", float, 0.0, "Epsilon in the epsilon-insensitive loss."),
+        _HP("max_iter", int, 1000, "Max iterations."),
+        _HP("random_state", int, 0, "Random seed."),
+    ],
+    "poisson_regressor": [
+        _HP("alpha", float, 1.0, "L2 regularization strength."),
+        _HP("max_iter", int, 100, "Max solver iterations."),
+        _HP("fit_intercept", bool, True, "Whether to fit an intercept."),
+    ],
+    "gamma_regressor": [
+        _HP("alpha", float, 1.0, "L2 regularization strength."),
+        _HP("max_iter", int, 100, "Max solver iterations."),
+        _HP("fit_intercept", bool, True, "Whether to fit an intercept."),
+    ],
+    "tweedie_regressor": [
+        _HP("power", float, 0.0, "Tweedie power (0=normal, 1=Poisson, 2=Gamma, 3=inverse-Gaussian)."),
+        _HP("alpha", float, 1.0, "L2 regularization strength."),
+        _HP("max_iter", int, 100, "Max solver iterations."),
+    ],
+    "bayesian_ridge": [
+        _HP("alpha_1", float, 1e-6, "Shape parameter for the alpha Gamma prior."),
+        _HP("lambda_1", float, 1e-6, "Shape parameter for the lambda Gamma prior."),
+        _HP("fit_intercept", bool, True, "Whether to fit an intercept."),
+    ],
+    "huber_regressor": [
+        _HP("epsilon", float, 1.35, "Threshold above which samples are treated as outliers."),
+        _HP("alpha", float, 0.0001, "L2 regularization strength."),
+        _HP("max_iter", int, 100, "Max iterations."),
+    ],
+    "quantile_regressor": [
+        _HP("quantile", float, 0.5, "Quantile to predict (0-1)."),
+        _HP("alpha", float, 1.0, "L1 regularization strength."),
+        _HP("fit_intercept", bool, True, "Whether to fit an intercept."),
+    ],
 }
 
 

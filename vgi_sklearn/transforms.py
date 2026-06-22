@@ -401,6 +401,510 @@ class IsolationForestFn(_BufferingTransform[IsolationForestArgs]):
 
 
 # ===========================================================================
+# More scalers / discretizers (output mirrors the feature columns)
+# ===========================================================================
+
+
+class MaxAbsScalerFn(_BufferingTransform[_BaseArgs]):
+    FunctionArguments: ClassVar[type] = _BaseArgs
+
+    class Meta:
+        name = "maxabs_scaler"
+        description = "Scale each feature by its maximum absolute value (to [-1, 1])"
+        categories = ["preprocessing", "scaling"]
+        examples = _ex("maxabs_scaler")
+
+    output_fields = staticmethod(_scaler_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.preprocessing import MaxAbsScaler
+
+        z = MaxAbsScaler().fit_transform(x)
+        return {f: z[:, j].tolist() for j, f in enumerate(feature_names)}
+
+
+@dataclass(slots=True, frozen=True)
+class PowerTransformerArgs(_BaseArgs):
+    method: Annotated[str, Arg("method", default="yeo-johnson", doc="'yeo-johnson' (any sign) or 'box-cox' (>0).")]
+
+
+class PowerTransformerFn(_BufferingTransform[PowerTransformerArgs]):
+    FunctionArguments: ClassVar[type] = PowerTransformerArgs
+
+    class Meta:
+        name = "power_transformer"
+        description = "Make features more Gaussian via a power transform (Yeo-Johnson / Box-Cox)"
+        categories = ["preprocessing", "scaling"]
+        examples = _ex("power_transformer", "method => 'yeo-johnson'")
+
+    output_fields = staticmethod(_scaler_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.preprocessing import PowerTransformer
+
+        z = PowerTransformer(method=args.method).fit_transform(x)
+        return {f: z[:, j].tolist() for j, f in enumerate(feature_names)}
+
+
+@dataclass(slots=True, frozen=True)
+class QuantileTransformerArgs(_BaseArgs):
+    n_quantiles: Annotated[int, Arg("n_quantiles", default=1000, doc="Number of quantiles (capped at n_samples).")]
+    output_distribution: Annotated[str, Arg("output_distribution", default="uniform", doc="'uniform' or 'normal'.")]
+
+
+class QuantileTransformerFn(_BufferingTransform[QuantileTransformerArgs]):
+    FunctionArguments: ClassVar[type] = QuantileTransformerArgs
+
+    class Meta:
+        name = "quantile_transformer"
+        description = "Map features to a uniform or normal distribution via quantiles (robust to outliers)"
+        categories = ["preprocessing", "scaling"]
+        examples = _ex("quantile_transformer", "output_distribution => 'normal'")
+
+    output_fields = staticmethod(_scaler_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.preprocessing import QuantileTransformer
+
+        n_q = max(1, min(args.n_quantiles, x.shape[0]))
+        z = QuantileTransformer(n_quantiles=n_q, output_distribution=args.output_distribution).fit_transform(x)
+        return {f: z[:, j].tolist() for j, f in enumerate(feature_names)}
+
+
+@dataclass(slots=True, frozen=True)
+class BinarizerArgs(_BaseArgs):
+    threshold: Annotated[float, Arg("threshold", default=0.0, doc="Values above this map to 1, else 0.")]
+
+
+class BinarizerFn(_BufferingTransform[BinarizerArgs]):
+    FunctionArguments: ClassVar[type] = BinarizerArgs
+
+    class Meta:
+        name = "binarizer"
+        description = "Threshold features to 0/1"
+        categories = ["preprocessing"]
+        examples = _ex("binarizer", "threshold => 0.0")
+
+    output_fields = staticmethod(_scaler_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.preprocessing import Binarizer
+
+        z = Binarizer(threshold=args.threshold).fit_transform(x)
+        return {f: z[:, j].tolist() for j, f in enumerate(feature_names)}
+
+
+@dataclass(slots=True, frozen=True)
+class KBinsDiscretizerArgs(_BaseArgs):
+    n_bins: Annotated[int, Arg("n_bins", default=5, doc="Number of bins per feature.")]
+    strategy: Annotated[str, Arg("strategy", default="quantile", doc="'uniform', 'quantile', or 'kmeans'.")]
+
+
+def _bin_fields(feature_names: list[str], _args: Any) -> list[pa.Field]:
+    return [sfield(f, pa.int64(), f"Bin index for {f}.", nullable=False) for f in feature_names]
+
+
+class KBinsDiscretizerFn(_BufferingTransform[KBinsDiscretizerArgs]):
+    FunctionArguments: ClassVar[type] = KBinsDiscretizerArgs
+
+    class Meta:
+        name = "kbins_discretizer"
+        description = "Discretize continuous features into integer bins (one bin index column per feature)"
+        categories = ["preprocessing", "encoding"]
+        examples = _ex("kbins_discretizer", "n_bins => 5")
+
+    output_fields = staticmethod(_bin_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.preprocessing import KBinsDiscretizer
+
+        codes = KBinsDiscretizer(n_bins=args.n_bins, encode="ordinal", strategy=args.strategy).fit_transform(x)
+        return {f: [int(v) for v in codes[:, j]] for j, f in enumerate(feature_names)}
+
+
+# ===========================================================================
+# More clustering (emit a cluster label per row, like kmeans/dbscan)
+# ===========================================================================
+
+
+@dataclass(slots=True, frozen=True)
+class AgglomerativeArgs(_BaseArgs):
+    n_clusters: Annotated[int, Arg("n_clusters", default=2, doc="Number of clusters.")]
+    linkage: Annotated[str, Arg("linkage", default="ward", doc="Linkage: ward, complete, average, single.")]
+
+
+class AgglomerativeFn(_BufferingTransform[AgglomerativeArgs]):
+    FunctionArguments: ClassVar[type] = AgglomerativeArgs
+
+    class Meta:
+        name = "agglomerative_clustering"
+        description = "Hierarchical (agglomerative) clustering; emits a cluster label per row"
+        categories = ["clustering"]
+        examples = _ex("agglomerative_clustering", "n_clusters => 3")
+
+    output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.cluster import AgglomerativeClustering
+
+        labels = AgglomerativeClustering(n_clusters=args.n_clusters, linkage=args.linkage).fit_predict(x)
+        return {"cluster": [int(v) for v in labels]}
+
+
+@dataclass(slots=True, frozen=True)
+class SpectralClusteringArgs(_BaseArgs):
+    n_clusters: Annotated[int, Arg("n_clusters", default=2, doc="Number of clusters.")]
+    random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
+
+
+class SpectralClusteringFn(_BufferingTransform[SpectralClusteringArgs]):
+    FunctionArguments: ClassVar[type] = SpectralClusteringArgs
+
+    class Meta:
+        name = "spectral_clustering"
+        description = "Spectral clustering on the affinity graph; emits a cluster label per row"
+        categories = ["clustering"]
+        examples = _ex("spectral_clustering", "n_clusters => 3")
+
+    output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.cluster import SpectralClustering
+
+        labels = SpectralClustering(n_clusters=args.n_clusters, random_state=args.random_state).fit_predict(x)
+        return {"cluster": [int(v) for v in labels]}
+
+
+@dataclass(slots=True, frozen=True)
+class MeanShiftArgs(_BaseArgs):
+    bandwidth: Annotated[float, Arg("bandwidth", default=0.0, doc="Kernel bandwidth; 0 = estimate automatically.")]
+
+
+class MeanShiftFn(_BufferingTransform[MeanShiftArgs]):
+    FunctionArguments: ClassVar[type] = MeanShiftArgs
+
+    class Meta:
+        name = "mean_shift"
+        description = "Mean-shift clustering (auto-discovers the number of clusters)"
+        categories = ["clustering"]
+        examples = _ex("mean_shift")
+
+    output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.cluster import MeanShift
+
+        labels = MeanShift(bandwidth=args.bandwidth or None).fit_predict(x)
+        return {"cluster": [int(v) for v in labels]}
+
+
+@dataclass(slots=True, frozen=True)
+class BirchArgs(_BaseArgs):
+    n_clusters: Annotated[int, Arg("n_clusters", default=3, doc="Number of clusters for the final step.")]
+    threshold: Annotated[float, Arg("threshold", default=0.5, doc="Radius of a subcluster to absorb a sample.")]
+
+
+class BirchFn(_BufferingTransform[BirchArgs]):
+    FunctionArguments: ClassVar[type] = BirchArgs
+
+    class Meta:
+        name = "birch"
+        description = "BIRCH clustering (memory-efficient for large datasets)"
+        categories = ["clustering"]
+        examples = _ex("birch", "n_clusters => 3")
+
+    output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.cluster import Birch
+
+        labels = Birch(n_clusters=args.n_clusters, threshold=args.threshold).fit_predict(x)
+        return {"cluster": [int(v) for v in labels]}
+
+
+@dataclass(slots=True, frozen=True)
+class OpticsArgs(_BaseArgs):
+    min_samples: Annotated[int, Arg("min_samples", default=5, doc="Min samples in a neighbourhood for a core point.")]
+
+
+class OpticsFn(_BufferingTransform[OpticsArgs]):
+    FunctionArguments: ClassVar[type] = OpticsArgs
+
+    class Meta:
+        name = "optics"
+        description = "OPTICS density clustering; emits a cluster label per row (-1 = noise)"
+        categories = ["clustering"]
+        examples = _ex("optics", "min_samples => 5")
+
+    output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.cluster import OPTICS
+
+        labels = OPTICS(min_samples=args.min_samples).fit_predict(x)
+        return {"cluster": [int(v) for v in labels]}
+
+
+class MiniBatchKMeansFn(_BufferingTransform[KMeansArgs]):
+    FunctionArguments: ClassVar[type] = KMeansArgs
+
+    class Meta:
+        name = "minibatch_kmeans"
+        description = "Mini-batch K-Means clustering (faster on large datasets)"
+        categories = ["clustering"]
+        examples = _ex("minibatch_kmeans", "n_clusters => 3")
+
+    output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.cluster import MiniBatchKMeans
+
+        labels = MiniBatchKMeans(n_clusters=args.n_clusters, random_state=args.random_state, n_init=10).fit_predict(x)
+        return {"cluster": [int(v) for v in labels]}
+
+
+@dataclass(slots=True, frozen=True)
+class GaussianMixtureArgs(_BaseArgs):
+    n_components: Annotated[int, Arg("n_components", default=2, doc="Number of mixture components (clusters).")]
+    covariance_type: Annotated[str, Arg("covariance_type", default="full", doc="full, tied, diag, or spherical.")]
+    random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
+
+
+class GaussianMixtureFn(_BufferingTransform[GaussianMixtureArgs]):
+    FunctionArguments: ClassVar[type] = GaussianMixtureArgs
+
+    class Meta:
+        name = "gaussian_mixture"
+        description = "Gaussian mixture model clustering; emits the most likely component per row"
+        categories = ["clustering"]
+        examples = _ex("gaussian_mixture", "n_components => 3")
+
+    output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.mixture import GaussianMixture
+
+        labels = GaussianMixture(
+            n_components=args.n_components, covariance_type=args.covariance_type, random_state=args.random_state
+        ).fit_predict(x)
+        return {"cluster": [int(v) for v in labels]}
+
+
+# ===========================================================================
+# More outlier detection (anomaly_score + is_outlier, like isolation_forest)
+# ===========================================================================
+
+
+@dataclass(slots=True, frozen=True)
+class LofArgs(_BaseArgs):
+    n_neighbors: Annotated[int, Arg("n_neighbors", default=20, doc="Number of neighbours to use.")]
+    contamination: Annotated[float, Arg("contamination", default=0.1, doc="Expected proportion of outliers (0-0.5).")]
+
+
+class LocalOutlierFactorFn(_BufferingTransform[LofArgs]):
+    FunctionArguments: ClassVar[type] = LofArgs
+
+    class Meta:
+        name = "local_outlier_factor"
+        description = "Local Outlier Factor; emits an anomaly score and flag per row"
+        categories = ["outlier-detection"]
+        examples = _ex("local_outlier_factor", "n_neighbors => 20")
+
+    output_fields = staticmethod(_outlier_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.neighbors import LocalOutlierFactor
+
+        model = LocalOutlierFactor(n_neighbors=args.n_neighbors, contamination=args.contamination)
+        pred = model.fit_predict(x)
+        score = -model.negative_outlier_factor_  # flip so higher = more anomalous
+        return {
+            "anomaly_score": [float(v) for v in score],
+            "is_outlier": [1 if v == -1 else 0 for v in pred],
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class OneClassSvmArgs(_BaseArgs):
+    nu: Annotated[float, Arg("nu", default=0.5, doc="Upper bound on the fraction of outliers (0-1).")]
+    kernel: Annotated[str, Arg("kernel", default="rbf", doc="Kernel: rbf, linear, poly, sigmoid.")]
+    gamma: Annotated[str, Arg("gamma", default="scale", doc="Kernel coefficient ('scale' or 'auto').")]
+
+
+class OneClassSvmFn(_BufferingTransform[OneClassSvmArgs]):
+    FunctionArguments: ClassVar[type] = OneClassSvmArgs
+
+    class Meta:
+        name = "one_class_svm"
+        description = "One-Class SVM novelty/outlier detection; emits an anomaly score and flag per row"
+        categories = ["outlier-detection"]
+        examples = _ex("one_class_svm", "nu => 0.1")
+
+    output_fields = staticmethod(_outlier_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.svm import OneClassSVM
+
+        model = OneClassSVM(nu=args.nu, kernel=args.kernel, gamma=args.gamma)
+        pred = model.fit_predict(x)
+        score = -model.decision_function(x)  # flip so higher = more anomalous
+        return {
+            "anomaly_score": [float(v) for v in score],
+            "is_outlier": [1 if v == -1 else 0 for v in pred],
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class EllipticEnvelopeArgs(_BaseArgs):
+    contamination: Annotated[float, Arg("contamination", default=0.1, doc="Expected proportion of outliers (0-0.5).")]
+    random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
+
+
+class EllipticEnvelopeFn(_BufferingTransform[EllipticEnvelopeArgs]):
+    FunctionArguments: ClassVar[type] = EllipticEnvelopeArgs
+
+    class Meta:
+        name = "elliptic_envelope"
+        description = "Elliptic Envelope (Gaussian) outlier detection; emits an anomaly score and flag per row"
+        categories = ["outlier-detection"]
+        examples = _ex("elliptic_envelope", "contamination => 0.1")
+
+    output_fields = staticmethod(_outlier_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.covariance import EllipticEnvelope
+
+        model = EllipticEnvelope(contamination=args.contamination, random_state=args.random_state)
+        pred = model.fit_predict(x)
+        score = -model.decision_function(x)  # flip so higher = more anomalous
+        return {
+            "anomaly_score": [float(v) for v in score],
+            "is_outlier": [1 if v == -1 else 0 for v in pred],
+        }
+
+
+# ===========================================================================
+# Manifold learning (non-linear embeddings -> component_1..k, like pca)
+# ===========================================================================
+
+
+@dataclass(slots=True, frozen=True)
+class TsneArgs(ComponentsArgs):
+    perplexity: Annotated[float, Arg("perplexity", default=30.0, doc="Nearest-neighbour count proxy (< n_samples).")]
+    random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
+
+
+class TsneFn(_BufferingTransform[TsneArgs]):
+    FunctionArguments: ClassVar[type] = TsneArgs
+
+    class Meta:
+        name = "tsne"
+        description = "t-SNE non-linear embedding (great for 2-D visualization)"
+        categories = ["manifold", "dimensionality-reduction"]
+        examples = _ex("tsne", "n_components => 2")
+
+    output_fields = staticmethod(_component_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.manifold import TSNE
+
+        k = _effective_components(args.n_components, len(feature_names))
+        emb = TSNE(n_components=k, perplexity=args.perplexity, random_state=args.random_state).fit_transform(x)
+        return {f"component_{i + 1}": emb[:, i].tolist() for i in range(k)}
+
+
+@dataclass(slots=True, frozen=True)
+class IsomapArgs(ComponentsArgs):
+    n_neighbors: Annotated[int, Arg("n_neighbors", default=5, doc="Number of neighbours per point.")]
+
+
+class IsomapFn(_BufferingTransform[IsomapArgs]):
+    FunctionArguments: ClassVar[type] = IsomapArgs
+
+    class Meta:
+        name = "isomap"
+        description = "Isomap non-linear embedding (geodesic distance preservation)"
+        categories = ["manifold", "dimensionality-reduction"]
+        examples = _ex("isomap", "n_components => 2")
+
+    output_fields = staticmethod(_component_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.manifold import Isomap
+
+        k = _effective_components(args.n_components, len(feature_names))
+        emb = Isomap(n_components=k, n_neighbors=args.n_neighbors).fit_transform(x)
+        return {f"component_{i + 1}": emb[:, i].tolist() for i in range(k)}
+
+
+@dataclass(slots=True, frozen=True)
+class SpectralEmbeddingArgs(ComponentsArgs):
+    random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
+
+
+class SpectralEmbeddingFn(_BufferingTransform[SpectralEmbeddingArgs]):
+    FunctionArguments: ClassVar[type] = SpectralEmbeddingArgs
+
+    class Meta:
+        name = "spectral_embedding"
+        description = "Spectral (Laplacian eigenmaps) non-linear embedding"
+        categories = ["manifold", "dimensionality-reduction"]
+        examples = _ex("spectral_embedding", "n_components => 2")
+
+    output_fields = staticmethod(_component_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.manifold import SpectralEmbedding
+
+        k = _effective_components(args.n_components, len(feature_names))
+        emb = SpectralEmbedding(n_components=k, random_state=args.random_state).fit_transform(x)
+        return {f"component_{i + 1}": emb[:, i].tolist() for i in range(k)}
+
+
+@dataclass(slots=True, frozen=True)
+class MdsArgs(ComponentsArgs):
+    random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
+
+
+class MdsFn(_BufferingTransform[MdsArgs]):
+    FunctionArguments: ClassVar[type] = MdsArgs
+
+    class Meta:
+        name = "mds"
+        description = "Multidimensional scaling embedding (distance preservation)"
+        categories = ["manifold", "dimensionality-reduction"]
+        examples = _ex("mds", "n_components => 2")
+
+    output_fields = staticmethod(_component_fields)  # type: ignore[assignment]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.manifold import MDS
+
+        k = _effective_components(args.n_components, len(feature_names))
+        emb = MDS(n_components=k, random_state=args.random_state).fit_transform(x)
+        return {f"component_{i + 1}": emb[:, i].tolist() for i in range(k)}
+
+
+# ===========================================================================
 # Categorical encoders (string input)
 #
 # Unlike the transforms above, the input columns here are *strings*. fit/predict
@@ -545,9 +1049,7 @@ class OneHotEncoderFn(_EncoderBase[_BaseArgs]):
         enc = OneHotEncoder(handle_unknown="ignore", sparse_output=True)
         matrix_oh = enc.fit_transform(_str_matrix(table, feats)).tocoo()
         # Map each one-hot column back to its (feature, category).
-        col_map: list[tuple[str, Any]] = [
-            (feats[fi], cat) for fi, cats in enumerate(enc.categories_) for cat in cats
-        ]
+        col_map: list[tuple[str, Any]] = [(feats[fi], cat) for fi, cats in enumerate(enc.categories_) for cat in cats]
         id_vals = table.column(args.id).to_pylist() if args.id else None
 
         ids: list[Any] = []
@@ -584,6 +1086,25 @@ TRANSFORM_FUNCTIONS: list[type] = [
     KMeansFn,
     DbscanFn,
     IsolationForestFn,
+    MaxAbsScalerFn,
+    PowerTransformerFn,
+    QuantileTransformerFn,
+    BinarizerFn,
+    KBinsDiscretizerFn,
+    AgglomerativeFn,
+    SpectralClusteringFn,
+    MeanShiftFn,
+    BirchFn,
+    OpticsFn,
+    MiniBatchKMeansFn,
+    GaussianMixtureFn,
+    LocalOutlierFactorFn,
+    OneClassSvmFn,
+    EllipticEnvelopeFn,
+    TsneFn,
+    IsomapFn,
+    SpectralEmbeddingFn,
+    MdsFn,
     OrdinalEncoderFn,
     OneHotEncoderFn,
 ]

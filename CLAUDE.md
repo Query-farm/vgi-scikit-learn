@@ -71,10 +71,14 @@ arg, while `fit_<estimator>` exposes them as typed named args.
 - **Typed `fit_<estimator>` functions** are generated in `typed_models.py` from
   the `_HPARAMS` spec via `types.new_class(name, (SinkBuffer[args, DrainState],),
   ...)` — plain `type()` can't resolve the subscripted-generic base. Each shares
-  `models._fit_and_emit`. To add/adjust hyperparameters, edit `_HPARAMS`; the
-  `test_typed_params_are_valid_for_estimator` test guards that every exposed
-  param is real for its estimator. `max_depth := 0` maps to `None` (unlimited);
-  mlp `hidden_units` maps to `hidden_layer_sizes=(n,)`.
+  `models._fit_and_emit`. **To add an estimator, add it to BOTH `_ESTIMATORS`
+  (models.py) and `_HPARAMS` (typed_models.py)** — `test_every_estimator_has_a_spec`
+  enforces identical keys, and one spec gives you the generic `fit`, the typed
+  `fit_<estimator>`, grouped `fit_model`, and a `grid_search` union member at once.
+  `test_typed_params_are_valid_for_estimator` guards that every exposed param is
+  real for its estimator (hparam types limited to int/float/str/bool — the
+  grid_search union only encodes those). `max_depth := 0` maps to `None`
+  (unlimited); mlp `hidden_units` maps to `hidden_layer_sizes=(n,)`.
 - **predict aligns features by name** (reorder-safe, extra columns ignored);
   missing feature columns raise clear errors at bind.
 - **Categorical (string) features auto-encode** (`features.py`). At fit, string

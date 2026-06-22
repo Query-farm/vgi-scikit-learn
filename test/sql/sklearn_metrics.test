@@ -41,6 +41,23 @@ SELECT round(sklearn.accuracy_score(y, yhat), 4) FROM cls;
 ----
 0.75
 
+# added classification losses on the same table (y=[0,1,0,1], yhat=[0,1,1,1])
+query III
+SELECT round(sklearn.hamming_loss(y, yhat), 4),
+       round(sklearn.zero_one_loss(y, yhat), 4),
+       round(sklearn.jaccard_score(y, yhat), 4)
+FROM cls;
+----
+0.25	0.25	0.5833
+
+# added regression metrics (non-negative values for log error)
+query II
+SELECT round(sklearn.mean_squared_log_error(actual, predicted), 6),
+       round(sklearn.mean_pinball_loss(actual, predicted), 6)
+FROM (VALUES (3.0, 2.5), (1.0, 1.2), (5.0, 4.5)) AS t(actual, predicted);
+----
+0.011495	0.2
+
 # Grouped metrics: one perfect group, one inverted group
 statement ok
 CREATE TEMP TABLE g AS

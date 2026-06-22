@@ -15,15 +15,23 @@ import pytest
 from sklearn.datasets import load_iris
 
 from vgi_sklearn.transforms import (
+    AgglomerativeFn,
+    GaussianMixtureFn,
     IsolationForestFn,
+    KBinsDiscretizerFn,
     KMeansFn,
+    LocalOutlierFactorFn,
+    MaxAbsScalerFn,
     MinMaxScalerFn,
+    OneClassSvmFn,
     OneHotEncoderFn,
     OrdinalEncoderFn,
     PcaFn,
+    PowerTransformerFn,
     SimpleImputerFn,
     StandardScalerFn,
     TruncatedSvdFn,
+    TsneFn,
 )
 
 X = load_iris().data
@@ -128,3 +136,53 @@ class TestEncoders:
             pa.schema([pa.field("id", pa.int64()), pa.field("city", pa.string())]), ["city"], SimpleNamespace(id="id")
         )
         assert schema.names == ["id", "feature", "category", "value"]
+
+
+class TestAddedClustering:
+    def test_agglomerative_labels(self) -> None:
+        out = AgglomerativeFn.transform(X, FEATS, SimpleNamespace(n_clusters=3, linkage="ward"))
+        assert len(out["cluster"]) == len(X)
+        assert set(out["cluster"]) == {0, 1, 2}
+
+    def test_gaussian_mixture_labels(self) -> None:
+        args = SimpleNamespace(n_components=3, covariance_type="full", random_state=0)
+        out = GaussianMixtureFn.transform(X, FEATS, args)
+        assert set(out["cluster"]) <= {0, 1, 2}
+
+
+class TestAddedOutliers:
+    def test_lof_flags_some(self) -> None:
+        out = LocalOutlierFactorFn.transform(X, FEATS, SimpleNamespace(n_neighbors=20, contamination=0.1))
+        assert set(out["is_outlier"]) <= {0, 1}
+        assert 0 < sum(out["is_outlier"]) < len(X)
+        assert len(out["anomaly_score"]) == len(X)
+
+    def test_one_class_svm_runs(self) -> None:
+        out = OneClassSvmFn.transform(X, FEATS, SimpleNamespace(nu=0.1, kernel="rbf", gamma="scale"))
+        assert len(out["anomaly_score"]) == len(X)
+
+
+class TestAddedManifold:
+    def test_tsne_two_components(self) -> None:
+        args = SimpleNamespace(n_components=2, perplexity=10.0, random_state=0)
+        out = TsneFn.transform(X, FEATS, args)
+        assert set(out) == {"component_1", "component_2"}
+        assert len(out["component_1"]) == len(X)
+
+
+class TestAddedScalers:
+    def test_maxabs_in_unit_range(self) -> None:
+        out = MaxAbsScalerFn.transform(X, FEATS, SimpleNamespace())
+        z = _stack(out, FEATS)
+        assert np.all(np.abs(z) <= 1.0 + 1e-9)
+
+    def test_power_transformer_runs(self) -> None:
+        out = PowerTransformerFn.transform(X, FEATS, SimpleNamespace(method="yeo-johnson"))
+        assert len(out["sepal_length"]) == len(X)
+
+    def test_kbins_integer_codes(self) -> None:
+        out = KBinsDiscretizerFn.transform(X, FEATS, SimpleNamespace(n_bins=4, strategy="quantile"))
+        codes = out["petal_length"]
+        assert all(isinstance(c, int) for c in codes)
+        assert set(codes) <= {0, 1, 2, 3}
+        assert [f.name for f in KBinsDiscretizerFn.output_fields(FEATS, SimpleNamespace())] == FEATS

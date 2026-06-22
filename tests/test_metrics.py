@@ -13,14 +13,20 @@ from sklearn import metrics as skm
 from vgi_sklearn.metrics import (
     AccuracyScore,
     AdjustedRandScore,
+    BrierScoreLoss,
     F1Score,
+    HammingLoss,
+    JaccardScore,
     LogLoss,
     MeanAbsoluteError,
+    MeanPinballLoss,
     MeanSquaredError,
+    MeanSquaredLogError,
     R2Score,
     RocAucScore,
     RootMeanSquaredError,
     VMeasureScore,
+    ZeroOneLoss,
 )
 
 from .harness import run_aggregate
@@ -84,6 +90,34 @@ class TestClustering:
 
     def test_v_measure(self) -> None:
         assert run_aggregate(VMeasureScore, _YT_CLS, _YP_CLS)[0] == _approx(skm.v_measure_score(_YT_CLS, _YP_CLS))
+
+
+_YT_POS = [3.0, 0.5, 2.0, 7.0, 4.2]
+_YP_POS = [2.5, 0.6, 2.1, 7.8, 3.9]
+
+
+class TestAddedMetrics:
+    def test_msle(self) -> None:
+        assert run_aggregate(MeanSquaredLogError, _YT_POS, _YP_POS)[0] == _approx(
+            skm.mean_squared_log_error(_YT_POS, _YP_POS)
+        )
+
+    def test_pinball(self) -> None:
+        assert run_aggregate(MeanPinballLoss, _YT_REG, _YP_REG)[0] == _approx(skm.mean_pinball_loss(_YT_REG, _YP_REG))
+
+    def test_hamming(self) -> None:
+        assert run_aggregate(HammingLoss, _YT_CLS, _YP_CLS)[0] == _approx(skm.hamming_loss(_YT_CLS, _YP_CLS))
+
+    def test_zero_one(self) -> None:
+        assert run_aggregate(ZeroOneLoss, _YT_CLS, _YP_CLS)[0] == _approx(skm.zero_one_loss(_YT_CLS, _YP_CLS))
+
+    def test_jaccard_macro(self) -> None:
+        assert run_aggregate(JaccardScore, _YT_CLS, _YP_CLS)[0] == _approx(
+            skm.jaccard_score(_YT_CLS, _YP_CLS, average="macro", zero_division=0)
+        )
+
+    def test_brier(self) -> None:
+        assert run_aggregate(BrierScoreLoss, _YT_BIN, _YSCORE)[0] == _approx(skm.brier_score_loss(_YT_BIN, _YSCORE))
 
 
 class TestGroupingAndNulls:

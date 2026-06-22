@@ -25,7 +25,14 @@ from typing import Annotated, Any, ClassVar
 import numpy as np
 import pyarrow as pa
 import sklearn
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis, QuadraticDiscriminantAnalysis
 from sklearn.ensemble import (
+    AdaBoostClassifier,
+    AdaBoostRegressor,
+    BaggingClassifier,
+    BaggingRegressor,
+    ExtraTreesClassifier,
+    ExtraTreesRegressor,
     GradientBoostingClassifier,
     GradientBoostingRegressor,
     HistGradientBoostingClassifier,
@@ -33,12 +40,27 @@ from sklearn.ensemble import (
     RandomForestClassifier,
     RandomForestRegressor,
 )
-from sklearn.linear_model import Lasso, LinearRegression, LogisticRegression, Ridge
+from sklearn.linear_model import (
+    BayesianRidge,
+    ElasticNet,
+    GammaRegressor,
+    HuberRegressor,
+    Lasso,
+    LinearRegression,
+    LogisticRegression,
+    PoissonRegressor,
+    QuantileRegressor,
+    Ridge,
+    RidgeClassifier,
+    SGDClassifier,
+    SGDRegressor,
+    TweedieRegressor,
+)
 from sklearn.model_selection import cross_val_predict as sk_cross_val_predict
-from sklearn.naive_bayes import GaussianNB
+from sklearn.naive_bayes import BernoulliNB, ComplementNB, GaussianNB, MultinomialNB
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.neural_network import MLPClassifier, MLPRegressor
-from sklearn.svm import SVC, SVR
+from sklearn.svm import SVC, SVR, LinearSVC, LinearSVR
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from vgi.arguments import Arg, TableInput
 from vgi.invocation import BindResponse
@@ -93,6 +115,31 @@ _ESTIMATORS: dict[str, tuple[str, type, dict[str, Any]]] = {
     "mlp_classifier": (CLASSIFICATION, MLPClassifier, {"max_iter": 500, "random_state": 0}),
     "mlp_regressor": (REGRESSION, MLPRegressor, {"max_iter": 500, "random_state": 0}),
     "gaussian_nb": (CLASSIFICATION, GaussianNB, {}),
+    # --- additional classifiers ---
+    "sgd_classifier": (CLASSIFICATION, SGDClassifier, {"random_state": 0}),
+    "ridge_classifier": (CLASSIFICATION, RidgeClassifier, {}),
+    "extra_trees_classifier": (CLASSIFICATION, ExtraTreesClassifier, {"random_state": 0}),
+    "ada_boost_classifier": (CLASSIFICATION, AdaBoostClassifier, {"random_state": 0}),
+    "bagging_classifier": (CLASSIFICATION, BaggingClassifier, {"random_state": 0}),
+    "linear_svc": (CLASSIFICATION, LinearSVC, {"random_state": 0}),
+    "multinomial_nb": (CLASSIFICATION, MultinomialNB, {}),
+    "bernoulli_nb": (CLASSIFICATION, BernoulliNB, {}),
+    "complement_nb": (CLASSIFICATION, ComplementNB, {}),
+    "lda": (CLASSIFICATION, LinearDiscriminantAnalysis, {}),
+    "qda": (CLASSIFICATION, QuadraticDiscriminantAnalysis, {}),
+    # --- additional regressors ---
+    "elastic_net": (REGRESSION, ElasticNet, {}),
+    "sgd_regressor": (REGRESSION, SGDRegressor, {"random_state": 0}),
+    "extra_trees_regressor": (REGRESSION, ExtraTreesRegressor, {"random_state": 0}),
+    "ada_boost_regressor": (REGRESSION, AdaBoostRegressor, {"random_state": 0}),
+    "bagging_regressor": (REGRESSION, BaggingRegressor, {"random_state": 0}),
+    "linear_svr": (REGRESSION, LinearSVR, {"random_state": 0}),
+    "poisson_regressor": (REGRESSION, PoissonRegressor, {}),
+    "gamma_regressor": (REGRESSION, GammaRegressor, {}),
+    "tweedie_regressor": (REGRESSION, TweedieRegressor, {}),
+    "bayesian_ridge": (REGRESSION, BayesianRidge, {}),
+    "huber_regressor": (REGRESSION, HuberRegressor, {}),
+    "quantile_regressor": (REGRESSION, QuantileRegressor, {"solver": "highs"}),
 }
 
 

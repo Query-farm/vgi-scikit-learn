@@ -75,6 +75,51 @@ FROM sklearn.isolation_forest((SELECT * FROM iris_feats), id => 'sample_id', con
 ----
 true
 
+# ---- Agglomerative & GaussianMixture recover 3 clusters on well-separated blobs ----
+
+query II
+SELECT
+  (SELECT count(DISTINCT cluster) FROM sklearn.agglomerative_clustering(
+     (SELECT sample_id, feature_0, feature_1 FROM sklearn.make_blobs(n_samples => 150, centers => 3)),
+     id => 'sample_id', n_clusters => 3)),
+  (SELECT count(DISTINCT cluster) FROM sklearn.gaussian_mixture(
+     (SELECT sample_id, feature_0, feature_1 FROM sklearn.make_blobs(n_samples => 150, centers => 3)),
+     id => 'sample_id', n_components => 3));
+----
+3	3
+
+# ---- LocalOutlierFactor flags some but not all rows ----
+
+query I
+SELECT (sum(is_outlier) > 0 AND sum(is_outlier) < count(*))
+FROM sklearn.local_outlier_factor((SELECT * FROM iris_feats), id => 'sample_id');
+----
+true
+
+# ---- t-SNE embeds every row into 2 components ----
+
+query II
+SELECT count(*), count(component_1) FILTER (WHERE component_2 IS NOT NULL)
+FROM sklearn.tsne((SELECT * FROM iris_feats), id => 'sample_id', n_components => 2, perplexity => 30);
+----
+150	150
+
+# ---- MaxAbsScaler keeps every value within [-1, 1] ----
+
+query I
+SELECT bool_and(abs(sepal_length_cm) <= 1.0 AND abs(petal_length_cm) <= 1.0)
+FROM sklearn.maxabs_scaler((SELECT * FROM iris_feats), id => 'sample_id');
+----
+true
+
+# ---- KBinsDiscretizer maps each feature to integer bins ----
+
+query I
+SELECT count(DISTINCT petal_length_cm)
+FROM sklearn.kbins_discretizer((SELECT * FROM iris_feats), id => 'sample_id', n_bins => 4);
+----
+4
+
 # ---- ordinal_encoder: one integer code column per string feature ----
 
 # 150 rows preserved; the 3 species map to exactly 3 distinct codes {0,1,2}
