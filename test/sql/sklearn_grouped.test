@@ -81,6 +81,16 @@ SELECT sklearn.predict_one(m.fit.model, {'sl': d.sl, 'sw': d.sw}) FROM d JOIN m 
 ----
 missing model column
 
+# ---- boolean features are accepted (coerced to 0/1) ----
+
+query I
+SELECT bool_and(fit.n_features = 2 AND fit.task = 'classification') FROM (
+  SELECT sklearn.fit_model({'wide_petal': pl > 2.5, 'sw': sw}, target,
+                           estimator := 'random_forest_classifier', hyperparams := '{}') AS fit
+  FROM d GROUP BY grp);
+----
+true
+
 # ---- regression per group ----
 
 query I
