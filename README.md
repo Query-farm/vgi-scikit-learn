@@ -1,4 +1,15 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Query-farm/vgi-scikit-learn/main/assets/vgi-logo.png" alt="Vector Gateway Interface" height="104">
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="https://raw.githubusercontent.com/Query-farm/vgi-scikit-learn/main/assets/scikit-learn-logo.png" alt="scikit-learn" height="80">
+</p>
+
 # vgi-sklearn
+
+[![CI](https://github.com/Query-farm/vgi-scikit-learn/actions/workflows/ci.yml/badge.svg)](https://github.com/Query-farm/vgi-scikit-learn/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/vgi-sklearn.svg)](https://pypi.org/project/vgi-sklearn/)
+[![Python](https://img.shields.io/pypi/pyversions/vgi-sklearn.svg)](https://pypi.org/project/vgi-sklearn/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A [VGI](https://github.com/query-farm/vgi-python) worker that brings
 [scikit-learn](https://scikit-learn.org/) into DuckDB/SQL: reference datasets,
