@@ -28,8 +28,8 @@ CREATE TABLE flowers AS SELECT * FROM sklearn.iris();
 
 CREATE TABLE model AS
   SELECT model FROM sklearn.fit_random_forest_classifier(
-    (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target FROM flowers),
-    target := 'target', id := 'sample_id', n_estimators := 200);
+    (SELECT sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target FROM flowers),
+    target := 'target', n_estimators := 200);
 
 SET VARIABLE m = (SELECT model FROM model);
 SELECT sample_id, prediction
@@ -50,17 +50,18 @@ Every modeling function follows the same SQL-friendly contract:
   `sklearn.pca((SELECT ...), …)`. (DuckDB allows a table function only one
   subquery argument, so the data goes there; everything else is a named arg.)
 - **Named arguments use `:=`** — `n_clusters := 3`, `target := 'label'`.
-- **`target`** names your label column (training only). **`id`** names an
-  identifier column that is **never used as a feature**. **Every other column is
-  treated as a numeric feature** — so `SELECT` only the columns you want as
-  features (non-numeric columns raise a clear error).
-- **What `id` does depends on the function.** Functions that emit one row per
-  input row — `predict`, the transforms, `cross_val_predict` — copy your `id`
-  onto each output row, so a plain `JOIN ... USING (id)` reattaches results to
-  the source. **`fit` returns a single summary row** (it doesn't echo your data),
-  so there `id` does just one thing: keep that identifier column out of the
-  feature matrix. Either way, pass `id` so the model never trains on a
-  meaningless key like `customer_id`.
+- **`target`** names your label column (training only). **Every other column you
+  select is a numeric feature** — so for `fit`, just `SELECT` your features and
+  the target; don't include an identifier column (non-numeric columns raise a
+  clear error).
+- **`id` is for getting results back, and it's per-row functions that need it.**
+  `predict`, the transforms, and `cross_val_predict` emit one row per input row
+  and copy your `id` onto each, so a plain `JOIN ... USING (id)` reattaches
+  results to the source. `fit` returns a single summary row — there's nothing to
+  join back — so it needs no `id`; you just leave the identifier out of the
+  `SELECT`. (`fit` *does* accept an optional `id :=` for the convenience of
+  passing a wide projection like `SELECT *`: it then drops that column from the
+  features so the model doesn't train on a key.)
 - **Features are matched by name, not position.** A model trained on
   `age, income` scores correctly whether you feed it `income, age` or a table
   with extra columns — it pulls its own features by name and errors if one is
@@ -87,26 +88,28 @@ CREATE TABLE churn AS
 
 SELECT estimator, task, n_samples, n_features, train_score
 FROM sklearn.fit_gradient_boosting_classifier(
-  (SELECT customer_id, tenure, monthly_spend, support_tickets, churned FROM churn),
+  -- just the features + the target; leave customer_id out (it isn't a feature)
+  (SELECT tenure, monthly_spend, support_tickets, churned FROM churn),
   model_name := 'churn_gb',          -- store it in the registry under this name
-  target := 'churned',               -- the label column
-  id := 'customer_id',               -- identifier: excluded from features (not trained on)
+  target := 'churned',               -- the label column; everything else is a feature
   n_estimators := 300,
   learning_rate := 0.05,
   max_depth := 3);
 ```
 
-`fit` returns one summary row describing the trained model (and the model
-itself, as a BLOB) — `id` here isn't echoed back, it just tells the worker that
-`customer_id` is an identifier, not a feature to learn from.
+`fit` returns one summary row (and the model itself as a BLOB); it doesn't echo
+your rows, so it needs no `id` — you simply don't select the identifier. If it's
+easier to pass a wide projection that already includes an id, add `id :=` and
+`fit` will keep that column out of the features:
 
 ```sql
--- a regressor
+-- a regressor; SELECT * includes diabetes()'s sample_id, so name it as the id
 SELECT estimator, task, train_score
 FROM sklearn.fit_random_forest_regressor(
   (SELECT * FROM sklearn.diabetes()),
-  model_name := 'diabetes_rf', target := 'target', id := 'sample_id',
-  n_estimators := 400, max_depth := 0);   -- max_depth := 0 means "no limit"
+  model_name := 'diabetes_rf', target := 'target',
+  id := 'sample_id',                       -- keeps sample_id out of the features
+  n_estimators := 400, max_depth := 0);    -- max_depth := 0 means "no limit"
 ```
 
 Available estimators (each is `sklearn.fit_<name>`):
@@ -279,8 +282,8 @@ allowed subquery, so the model scalar comes through `getvariable`):
 CREATE TABLE models AS
   SELECT 'churn_gb' AS name, model
   FROM sklearn.fit_gradient_boosting_classifier(
-    (SELECT customer_id, tenure, monthly_spend, support_tickets, churned FROM churn),
-    target := 'churned', id := 'customer_id');
+    (SELECT tenure, monthly_spend, support_tickets, churned FROM churn),
+    target := 'churned');
 
 SET VARIABLE m = (SELECT model FROM models WHERE name = 'churn_gb');
 SELECT * FROM sklearn.predict((SELECT * FROM churn), model := getvariable('m'), id := 'customer_id');
