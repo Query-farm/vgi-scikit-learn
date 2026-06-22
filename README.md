@@ -11,240 +11,347 @@
 [![Python](https://img.shields.io/pypi/pyversions/vgi-sklearn.svg)](https://pypi.org/project/vgi-sklearn/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A [VGI](https://github.com/query-farm/vgi-python) worker that brings
-[scikit-learn](https://scikit-learn.org/) into DuckDB/SQL: reference datasets,
-scoring metrics, unsupervised transforms, and a supervised train/predict model
-registry — all callable as SQL functions.
+**Train and run machine-learning models in pure SQL.** `vgi-sklearn` exposes
+[scikit-learn](https://scikit-learn.org/) to DuckDB as ordinary SQL functions —
+so you can scale features, cluster, detect outliers, train a classifier, and
+score new rows without leaving your query. No Python notebook, no CSV export, no
+glue code: your table goes in, predictions come out, and the model can live in a
+DuckDB column.
 
 ```sql
+-- one-time: load the extension and attach the worker
 INSTALL vgi FROM community; LOAD vgi;
--- attach the installed worker (pip/uv install vgi-sklearn provides the
--- `vgi-sklearn` launcher); for a source checkout use 'uv run sklearn_worker.py'.
-ATTACH 'sklearn' (TYPE vgi, LOCATION 'vgi-sklearn');
+ATTACH 'sklearn' (TYPE vgi, LOCATION 'vgi-sklearn');   -- 'uv run sklearn_worker.py' from a checkout
 
-SELECT * FROM sklearn.iris();
-SELECT sklearn.r2_score(actual, predicted) FROM my_predictions;
-SELECT * FROM sklearn.kmeans((SELECT id, x, y FROM points), id := 'id', n_clusters := 3);
+-- train a model on a table and score rows, all in SQL
+CREATE TABLE flowers AS SELECT * FROM sklearn.iris();
+
+CREATE TABLE model AS
+  SELECT model FROM sklearn.fit_random_forest_classifier(
+    (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target FROM flowers),
+    target := 'target', id := 'sample_id', n_estimators := 200);
+
+SET VARIABLE m = (SELECT model FROM model);
+SELECT sample_id, prediction
+FROM sklearn.predict((SELECT * EXCLUDE (target) FROM flowers), model := getvariable('m'), id := 'sample_id')
+LIMIT 5;
 ```
 
-## How it maps scikit-learn onto SQL
+That's the whole loop: `fit_…` returns a trained model, `predict` scores a table
+through it. Everything below is variations on that theme.
 
-scikit-learn is built around stateful *fit / transform / predict* estimators;
-SQL is set-oriented. Each area is mapped to the VGI primitive that fits its
-data flow:
+---
 
-| Area | SQL surface | VGI primitive |
+## How it works (read this first — it's quick)
+
+Every modeling function follows the same SQL-friendly contract:
+
+- **Your input table is the feature matrix.** You pass it as a subquery —
+  `sklearn.pca((SELECT ...), …)`. (DuckDB allows a table function only one
+  subquery argument, so the data goes there; everything else is a named arg.)
+- **Named arguments use `:=`** — `n_clusters := 3`, `target := 'label'`.
+- **`target`** names your label column (for training). **`id`** names a column
+  to carry through untouched so you can join results back to the source row.
+  **Every other column is treated as a numeric feature** — so `SELECT` only the
+  columns you want as features (non-numeric columns raise a clear error).
+- **Results line up by `id`.** `predict`/`kmeans`/… emit your `id` next to the
+  `prediction`/`cluster`/… so a plain `JOIN ... USING (id)` reattaches them.
+- **Features are matched by name, not position.** A model trained on
+  `age, income` scores correctly whether you feed it `income, age` or a table
+  with extra columns — it pulls its own features by name and errors if one is
+  missing.
+
+If you know `GROUP BY` and subqueries, you already know how to use this.
+
+---
+
+## Recipes
+
+### Train a model
+
+Each estimator has its own `fit_<estimator>` function that exposes its real
+hyperparameters as **typed, named SQL arguments** (they autocomplete and are
+type-checked):
+
+```sql
+-- a classifier (your own table: customers you've labeled as churned 0/1)
+CREATE TABLE churn AS
+  SELECT sample_id AS customer_id, sepal_length_cm AS tenure, sepal_width_cm AS monthly_spend,
+         petal_length_cm AS support_tickets, (target = 0)::INT AS churned
+  FROM sklearn.iris();
+
+SELECT estimator, task, n_samples, n_features, train_score
+FROM sklearn.fit_gradient_boosting_classifier(
+  (SELECT customer_id, tenure, monthly_spend, support_tickets, churned FROM churn),
+  model_name := 'churn_gb',          -- store it in the registry under this name
+  target := 'churned',
+  id := 'customer_id',
+  n_estimators := 300,
+  learning_rate := 0.05,
+  max_depth := 3);
+```
+
+```sql
+-- a regressor
+SELECT estimator, task, train_score
+FROM sklearn.fit_random_forest_regressor(
+  (SELECT * FROM sklearn.diabetes()),
+  model_name := 'diabetes_rf', target := 'target', id := 'sample_id',
+  n_estimators := 400, max_depth := 0);   -- max_depth := 0 means "no limit"
+```
+
+Available estimators (each is `sklearn.fit_<name>`):
+
+| Family | Functions | Common typed args |
 | --- | --- | --- |
-| **Datasets** | `SELECT * FROM sklearn.iris()` | table function (source) |
-| **Metrics** | `sklearn.r2_score(y, yhat)` over `GROUP BY` | aggregate function |
-| **Transforms** | `sklearn.pca((SELECT ...), n_components := 2)` | table-buffering (`fit_transform`) |
-| **Fit** | `sklearn.fit((SELECT ...), model_name := 'm', ...)` | table-buffering → registry |
-| **Predict** | `sklearn.predict((SELECT ...), model_name := 'm')` | streaming table-in-out |
+| Linear | `logistic_regression`, `linear_regression`, `ridge`, `lasso` | `C`, `alpha`, `max_iter`, `fit_intercept`, `penalty`, `solver` |
+| Trees / ensembles | `decision_tree_classifier`/`_regressor`, `random_forest_classifier`/`_regressor`, `gradient_boosting_classifier`/`_regressor`, `hist_gradient_boosting_classifier`/`_regressor` | `n_estimators`, `max_depth`, `learning_rate`, `min_samples_split`, `subsample`, `random_state` |
+| SVM | `svc`, `svr` | `C`, `kernel`, `gamma`, `degree`, `epsilon` |
+| Neighbors | `knn_classifier`, `knn_regressor` | `n_neighbors`, `weights`, `p` |
+| Neural net | `mlp_classifier`, `mlp_regressor` | `hidden_units`, `alpha`, `max_iter`, `learning_rate_init` |
+| Naive Bayes | `gaussian_nb` | `var_smoothing` |
 
-**Conventions** for the transform / fit / predict functions:
+> Need a hyperparameter that isn't exposed as a typed argument? The generic
+> `sklearn.fit((SELECT ...), estimator := 'ridge', target := 'y', params := '{"alpha": 0.3, "solver": "svd"}')`
+> accepts any scikit-learn parameter as a JSON object.
 
-- The input relation **is** the feature matrix `X`, passed as a `(SELECT ...)`
-  subquery. Named arguments use DuckDB's `name := value` syntax.
-- **`id`** names a passthrough column: it is *excluded from the features* and
-  copied unchanged onto each output row, so you can join the result back to the
-  source (e.g. attach a `cluster`/`prediction` to the row it came from). It is
-  optional; omit it if you don't need to line results up with input rows.
-- **`target`** (required for supervised `fit` / `cross_val_predict`) names the
-  label column, also excluded from features.
-- **Every remaining column is treated as a numeric feature.** Non-numeric
-  columns raise a clear error — `SELECT` only the columns you want as features
-  (don't pass `SELECT *` when it includes text/label columns), or scale/encode
-  them first.
-- Hyperparameters are passed as a JSON string: `params := '{"n_estimators": 300}'`.
-  Unknown hyperparameters are rejected with the list of valid ones for that estimator.
-- **`fit`/`predict` align features by name**, not position: `predict` selects
-  the model's fitted feature columns by name (input order is irrelevant, extra
-  columns are ignored) and errors if a required feature column is missing.
+Every `fit_…` call **returns the trained model as a `model` BLOB column** *and*,
+when you pass `model_name`, saves it to the registry. So you choose where the
+model lives (see [Where models live](#where-models-live)).
 
-## Function catalog
+### Score new data
 
-### Datasets (`sklearn.<name>()`)
-`iris`, `wine`, `digits`, `breast_cancer` (classification), `diabetes`,
-`california_housing` (regression), and generators `make_classification`,
-`make_regression`, `make_blobs`, `make_moons`, `make_circles`.
+`predict` streams a table through a stored model. It carries your `id` through
+and appends `prediction`:
 
 ```sql
-SELECT target_name, avg(petal_length_cm) FROM sklearn.iris() GROUP BY target_name;
-SELECT * FROM sklearn.make_blobs(n_samples := 300, centers := 4);
+-- from a registry model by name
+SELECT customer_id, prediction
+FROM sklearn.predict(
+  (SELECT customer_id, tenure, monthly_spend, support_tickets FROM churn),
+  model_name := 'churn_gb', id := 'customer_id');
 ```
 
-### Metrics (aggregates over two columns)
-Regression: `mean_squared_error`, `root_mean_squared_error`,
-`mean_absolute_error`, `r2_score`, `explained_variance_score`,
-`mean_absolute_percentage_error`, `max_error`, `median_absolute_error`.
-Classification: `accuracy_score`, `precision_score`, `recall_score`, `f1_score`
-(macro), `balanced_accuracy_score`, `matthews_corrcoef`, `cohen_kappa_score`.
-Probability/ranking: `roc_auc_score`, `average_precision_score`, `log_loss`.
-Clustering comparison: `adjusted_rand_score`, `normalized_mutual_info_score`,
-`adjusted_mutual_info_score`, `homogeneity_score`, `completeness_score`,
-`v_measure_score`, `fowlkes_mallows_score`.
-
-Table-input metrics: `confusion_matrix` (long format), `silhouette_score`.
+Add `with_proba := true` to also get one probability column per class
+(`proba_0`, `proba_1`, …):
 
 ```sql
-SELECT model, sklearn.f1_score(y, yhat) FROM preds GROUP BY model;
-SELECT * FROM sklearn.confusion_matrix((SELECT y, yhat FROM preds), actual := 'y', predicted := 'yhat');
+SELECT customer_id, prediction, proba_1 AS churn_probability
+FROM sklearn.predict(
+  (SELECT customer_id, tenure, monthly_spend, support_tickets FROM churn),
+  model_name := 'churn_gb', id := 'customer_id', with_proba := true)
+WHERE proba_1 > 0.5;
 ```
 
-### Transforms (`fit_transform` over the whole input)
-Scalers: `standard_scaler`, `minmax_scaler`, `robust_scaler`, `normalizer`.
-Imputation: `simple_imputer`. Decomposition: `pca`, `truncated_svd`.
-Clustering: `kmeans`, `dbscan`. Outliers: `isolation_forest`.
+### Evaluate a model honestly (no leakage, nothing stored)
+
+`cross_val_predict` returns out-of-fold predictions — each row scored by a model
+that didn't see it — which you then compare to the truth with the metric
+functions:
 
 ```sql
--- pca: select sample_id (carried through) + the 4 numeric features only;
--- target / target_name are NOT selected, since they are not features.
+SELECT sklearn.accuracy_score(c.churned, p.prediction) AS cv_accuracy
+FROM sklearn.cross_val_predict(
+       (SELECT customer_id, tenure, monthly_spend, support_tickets, churned FROM churn),
+       estimator := 'gradient_boosting_classifier', target := 'churned', id := 'customer_id', cv := 5) p
+JOIN churn c ON c.customer_id = p.customer_id;
+```
+
+### Score predictions you already have
+
+The metric functions are plain aggregates over two columns — point them at any
+table of `(actual, predicted)` and group however you like:
+
+```sql
+-- one score, or one per segment/model with GROUP BY
+SELECT sklearn.r2_score(actual, predicted) AS r2,
+       sklearn.mean_absolute_error(actual, predicted) AS mae
+FROM my_predictions;
+
+-- a full confusion matrix in long form
+SELECT * FROM sklearn.confusion_matrix(
+  (SELECT label AS y, predicted AS yhat FROM my_predictions),
+  actual := 'y', predicted := 'yhat');
+```
+
+### Prepare / transform features
+
+All transforms take your table as a subquery, carry `id` through, and run
+`fit_transform` over the whole input:
+
+```sql
+-- standardize features (zero mean, unit variance)
+SELECT * FROM sklearn.standard_scaler(
+  (SELECT customer_id, tenure, monthly_spend, support_tickets FROM churn), id := 'customer_id');
+
+-- reduce to 2 components for plotting
 SELECT * FROM sklearn.pca(
-  (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm FROM sklearn.iris()),
-  id := 'sample_id', n_components := 2);
+  (SELECT customer_id, tenure, monthly_spend, support_tickets FROM churn),
+  id := 'customer_id', n_components := 2);
 
--- points(id, x, y): id is passed through; x and y are the features.
-SELECT * FROM sklearn.isolation_forest((SELECT id, x, y FROM points), id := 'id', contamination := 0.05);
+-- fill missing values before modeling
+SELECT * FROM sklearn.simple_imputer((SELECT ...), id := 'id', strategy := 'median');
 ```
 
-### Models (registry-backed)
-`fit`, `fit_<estimator>` (typed), `predict`, `cross_val_predict`,
+Transforms compose — pipe one into the next as nested subqueries (scale, then
+cluster).
+
+### Cluster & find outliers
+
+```sql
+-- k-means: appends a `cluster` label per row
+SELECT customer_id, cluster
+FROM sklearn.kmeans(
+  (SELECT customer_id, tenure, monthly_spend, support_tickets FROM churn),
+  id := 'customer_id', n_clusters := 4);
+
+-- isolation forest: appends `anomaly_score` and `is_outlier`
+SELECT customer_id, anomaly_score
+FROM sklearn.isolation_forest(
+  (SELECT customer_id, tenure, monthly_spend, support_tickets FROM churn),
+  id := 'customer_id', contamination := 0.05)
+WHERE is_outlier = 1;
+```
+
+### Get sample data to play with
+
+scikit-learn's bundled datasets are table functions — handy for trying things or
+building demos:
+
+```sql
+SELECT * FROM sklearn.iris();
+SELECT * FROM sklearn.make_blobs(n_samples := 300, centers := 4);   -- synthetic clusters
+```
+
+---
+
+## Function reference
+
+**Datasets** (no input): `iris`, `wine`, `digits`, `breast_cancer`, `diabetes`,
+`california_housing`, and generators `make_classification`, `make_regression`,
+`make_blobs`, `make_moons`, `make_circles`.
+
+**Models:** `fit_<estimator>` (typed, see the table above), generic `fit`
+(escape hatch with JSON `params`), `predict`, `cross_val_predict`,
 `list_models`, `model_info`, `drop_model`.
 
-Estimators (for generic `fit`'s `estimator :=` arg): `logistic_regression`,
-`random_forest_classifier`/`_regressor`, `gradient_boosting_classifier`/`_regressor`,
-`hist_gradient_boosting_classifier`/`_regressor`, `linear_regression`, `ridge`,
-`lasso`, `svc`, `svr`, `knn_classifier`/`_regressor`,
-`decision_tree_classifier`/`_regressor`, `mlp_classifier`/`_regressor`,
-`gaussian_nb`.
+**Transforms** (table in, `id` passthrough): `standard_scaler`, `minmax_scaler`,
+`robust_scaler`, `normalizer`, `simple_imputer`, `pca`, `truncated_svd`,
+`kmeans`, `dbscan`, `isolation_forest`.
+
+**Metric aggregates** over `(y_true, y_pred)`:
+- Regression — `mean_squared_error`, `root_mean_squared_error`,
+  `mean_absolute_error`, `r2_score`, `explained_variance_score`,
+  `mean_absolute_percentage_error`, `max_error`, `median_absolute_error`
+- Classification — `accuracy_score`, `precision_score`, `recall_score`,
+  `f1_score`, `balanced_accuracy_score`, `matthews_corrcoef`, `cohen_kappa_score`
+- Probability / ranking — `roc_auc_score`, `average_precision_score`, `log_loss`
+- Clustering — `adjusted_rand_score`, `normalized_mutual_info_score`,
+  `adjusted_mutual_info_score`, `homogeneity_score`, `completeness_score`,
+  `v_measure_score`, `fowlkes_mallows_score`
+
+**Metrics over a table:** `confusion_matrix` (long format), `silhouette_score`.
+
+**Manage the registry:** `SELECT * FROM sklearn.list_models();`,
+`sklearn.model_info('name')`, `sklearn.drop_model('name')`.
+
+---
+
+## Where models live
+
+A `fit_…` call always returns the model as a **`model` BLOB** *and* saves it to
+the registry when you pass `model_name`. Two ways to keep a model:
+
+**In a DuckDB table (BLOB).** Store the `model` column anywhere; pass it to
+`predict` via a session variable (the data subquery is the table function's one
+allowed subquery, so the model scalar comes through `getvariable`):
 
 ```sql
--- train (generic fit: estimator + JSON hyperparameters)
-SELECT * FROM sklearn.fit(
-  (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target FROM sklearn.iris()),
-  model_name := 'iris_rf', estimator := 'random_forest_classifier', target := 'target', id := 'sample_id',
-  params := '{"n_estimators": 300}');
-
--- predict later (optionally with per-class probabilities)
-SELECT * FROM sklearn.predict((SELECT * FROM new_flowers), model_name := 'iris_rf', id := 'id', with_proba := true);
-
--- evaluate without persisting
-SELECT sklearn.accuracy_score(i.target, p.prediction)
-FROM sklearn.cross_val_predict(
-       (SELECT * FROM iris_xy), estimator := 'logistic_regression', target := 'target', id := 'sample_id') p
-JOIN iris_xy i USING (sample_id);
-
-SELECT * FROM sklearn.list_models();
-SELECT * FROM sklearn.drop_model('iris_rf');
-```
-
-### Typed estimator functions (discoverable hyperparameters)
-
-Each estimator also has a `fit_<estimator>` function that exposes its common
-hyperparameters as **native, typed SQL named arguments** — visible in the
-catalog and DuckDB autocomplete, and type-checked:
-
-```sql
-SELECT * FROM sklearn.fit_random_forest_classifier(
-  (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target FROM sklearn.iris()),
-  model_name := 'iris_rf', target := 'target', id := 'sample_id',
-  n_estimators := 300, max_depth := 8);   -- max_depth := 0 means unlimited
-```
-
-There is one per estimator (`fit_ridge`, `fit_svc`, `fit_mlp_classifier`, ...).
-They behave exactly like `fit`; use the generic `fit` with JSON `params` for any
-hyperparameter not surfaced as a typed argument.
-
-## Model storage: registry or in-database BLOB
-
-Every `fit` / `fit_<estimator>` returns the fitted model as a **`model` BLOB**
-column (estimator + metadata packed together) *and*, when `model_name` is given,
-persists it to the registry. So `model_name` is optional — you choose where the
-model lives:
-
-```sql
--- keep models inside the database, in a regular table
 CREATE TABLE models AS
-SELECT 'iris_rf' AS name, model
-FROM sklearn.fit_random_forest_classifier(
-  (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target FROM sklearn.iris()),
-  target := 'target', id := 'sample_id');
+  SELECT 'churn_gb' AS name, model
+  FROM sklearn.fit_gradient_boosting_classifier(
+    (SELECT customer_id, tenure, monthly_spend, support_tickets, churned FROM churn),
+    target := 'churned', id := 'customer_id');
 
--- predict from a BLOB. A table function allows only one subquery parameter
--- (the data), so pass the model scalar via a session variable:
-SET VARIABLE m = (SELECT model FROM models WHERE name = 'iris_rf');
-SELECT * FROM sklearn.predict(
-  (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm FROM sklearn.iris()),
-  model := getvariable('m'), id := 'sample_id');
+SET VARIABLE m = (SELECT model FROM models WHERE name = 'churn_gb');
+SELECT * FROM sklearn.predict((SELECT * FROM churn), model := getvariable('m'), id := 'customer_id');
 ```
 
-`predict` takes **either** `model_name :=` (registry) **or** `model :=` (a BLOB).
-DuckDB BLOBs are capped near 2 GB, so very large ensembles may not fit in-DB.
+**In the named registry.** Pass `model_name` to `fit_…`, then reference it by
+name (`predict(..., model_name := 'churn_gb')`). The registry is local disk by
+default (`SKLEARN_MODELS_DIR`, default `./models`); an S3/R2 backend is the
+planned drop-in (`registry.get_store()` is the single seam). `predict` takes
+**either** `model_name :=` or `model :=`.
 
-The named registry sits behind the `ModelStore` interface in
-`vgi_sklearn/registry.py`:
-
-- **Local disk** (default): `SKLEARN_MODELS_DIR` (default `./models`).
-- **S3 / Cloudflare R2**: not yet implemented — `get_store()` is the single seam
-  where an `S3Store` drops in.
-
-On Fly.io the local store is backed by a mounted volume (see `fly.toml`) so
-named models survive machine restarts. `predict` records the scikit-learn version
-used to fit and logs a warning (visible in `duckdb_logs()`) if the worker's
-version differs.
+DuckDB BLOBs cap near 2 GB, so a very large ensemble may not fit in a column —
+use the registry for those.
 
 ### Model serialization & safety
 
-Models are stored with [**skops**](https://skops.readthedocs.io/), not pickle.
-Loading reconstructs only a known set of types instead of executing arbitrary
-code, and this worker further restricts the trusted set to the
-`scikit-learn` / `numpy` / `scipy` namespaces — a crafted artifact cannot smuggle
-in an arbitrary callable (e.g. `os.system`); it's rejected with a clear error.
+Models are stored with [**skops**](https://skops.readthedocs.io/), not pickle:
+loading reconstructs only known types instead of executing arbitrary code, and
+this worker further restricts the trusted set to the `scikit-learn` / `numpy` /
+`scipy` namespaces — a crafted artifact can't smuggle in an arbitrary callable.
 
 > [!NOTE]
-> skops removes pickle's arbitrary-code-execution risk, but it is not a trust
-> oracle — keep `SKLEARN_MODELS_DIR` / the registry backend writable only by
-> trusted users. skops also stores scikit-learn objects, so it is **not**
-> version-independent: a model may fail to load or behave differently under a
-> different scikit-learn version. The worker records the fitting version and
-> logs a `duckdb_logs()` warning on mismatch. (For fully version-independent
-> inference you would export to ONNX, at the cost of estimator coverage.)
+> skops removes pickle's code-execution risk, but it isn't a trust oracle — keep
+> the registry / `SKLEARN_MODELS_DIR` writable only by trusted users. skops
+> stores scikit-learn objects, so it is **not** version-independent: a model may
+> fail to load or behave differently under a different scikit-learn version. The
+> worker records the fitting version and logs a `duckdb_logs()` warning on
+> mismatch. (Fully version-independent inference would mean exporting to ONNX, at
+> the cost of estimator coverage.)
+
+---
+
+## Install
+
+```sh
+pip install vgi-sklearn        # or: uvx vgi-sklearn
+```
+
+This provides the `vgi-sklearn` (stdio, for DuckDB to spawn) and
+`vgi-sklearn-http` console scripts. Then `ATTACH 'sklearn' (TYPE vgi, LOCATION
+'vgi-sklearn')`. To attach a hosted HTTP deployment instead:
+`ATTACH 'sklearn' (TYPE vgi, LOCATION 'https://<host>')`.
 
 ## Local development
 
 ```sh
-uv sync                       # install the worker + deps from uv.lock (PyPI vgi-python)
-uv run pytest tests/ -q       # unit tests
-uvx ruff check . && uvx ruff format --check .   # lint + format
+uv sync                       # install worker + deps from uv.lock (PyPI vgi-python)
+uv run pytest tests/ -q       # unit tests (incl. pydoclint docstring gate)
+uvx ruff check . && uvx ruff format --check .
 ```
 
-For developing against **local** `vgi-python` / `vgi-rpc` checkouts instead of
-PyPI, use the Makefile targets (they point the worker at `uv run
-sklearn_worker.py` and install the local sources):
+To develop against **local** `vgi-python` / `vgi-rpc` checkouts instead of PyPI,
+use the Makefile targets (worker = `uv run sklearn_worker.py`):
 
 ```sh
-make venv          # .venv with vgi + scikit-learn from local checkouts
+make venv
 make test-stdio    # SQL integration tests, worker as a subprocess
 make test-http     # SQL integration tests against a local HTTP server
 ```
 
-The SQL suite (`test/sql/*.test`) is the authoritative integration test. CI
-([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs both unit and SQL
+The `test/sql/*.test` sqllogictest suite is the authoritative integration test.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the unit + SQL
 suites on Linux/macOS/Windows against the **signed community `vgi` extension**
-via a prebuilt `haybarn-unittest` — no local C++ build required (see
-[`ci/README.md`](ci/README.md)). Locally the SQL suite also runs against a
-DuckDB `unittest` binary built with the VGI extension (`VGI_BUILD_DIR`).
+via a prebuilt `haybarn-unittest` — no local C++ build (see
+[`ci/README.md`](ci/README.md)).
+
+## Publishing
+
+Releases publish to PyPI via [`.github/workflows/publish.yml`](.github/workflows/publish.yml):
+publishing a GitHub Release runs the full CI suite, then `uv build && uv publish`
+(token in the `PYPI_API_TOKEN` repo secret). Bump `version` in `pyproject.toml`
+before tagging.
 
 ## Deployment (Fly.io)
 
 ```sh
 make vendor-sync   # copy vgi-python / vgi-rpc into vendor/ for the Docker build
-make deploy        # build, smoke-test, push, and deploy
+make deploy        # build, smoke-test, push, deploy
 fly volumes create sklearn_models --size 1 --region iad   # one-time, for the registry
 ```
-
-`serve.py` runs the worker over HTTP; attach the deployed endpoint with
-`ATTACH 'sklearn' (TYPE vgi, LOCATION 'https://<app>.fly.dev');`.
 
 ## Layout
 
@@ -263,20 +370,6 @@ vgi_sklearn/
 sklearn_worker.py      dev/Fly stdio shim over vgi_sklearn.worker (for `uv run`)
 serve.py               dev/Fly HTTP shim over vgi_sklearn.worker
 ```
-
-## Installing & publishing
-
-Install from PyPI (provides the `vgi-sklearn` / `vgi-sklearn-http` console
-scripts):
-
-```sh
-pip install vgi-sklearn        # or: uvx vgi-sklearn
-```
-
-Releases publish to PyPI via [`.github/workflows/publish.yml`](.github/workflows/publish.yml):
-publishing a GitHub Release runs the full CI suite, then `uv build && uv publish`
-(token in the `PYPI_API_TOKEN` repo secret). Bump `version` in `pyproject.toml`
-before tagging.
 
 ## License
 
