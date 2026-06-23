@@ -21,7 +21,8 @@ vgi_sklearn/
   table_metrics.py    confusion_matrix / silhouette_score (buffering, table input)
   transforms.py       unsupervised fit_transform + ordinal/one_hot encoders (buffering)
   features.py         categorical (string) detection + auto one-hot Pipeline wrapping
-  models.py           generic fit / predict / cross_val_predict + registry mgmt
+  text.py             count/tfidf vectorizers over a text column (long-format output)
+  models.py           fit / predict / cross_val_predict / cross_val_score / permutation_importance + registry mgmt
   typed_models.py     generated fit_<estimator> functions with typed hyperparams
   search.py           grid_search — discriminated-union (sparse) hyperparameter search
   grouped.py          per-group modeling: fit_model (aggregate) + predict_* (scalars)

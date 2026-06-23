@@ -40,6 +40,7 @@ from sklearn.ensemble import (
     RandomForestClassifier,
     RandomForestRegressor,
 )
+from sklearn.inspection import permutation_importance as sk_permutation_importance
 from sklearn.linear_model import (
     BayesianRidge,
     ElasticNet,
@@ -57,6 +58,7 @@ from sklearn.linear_model import (
     TweedieRegressor,
 )
 from sklearn.model_selection import cross_val_predict as sk_cross_val_predict
+from sklearn.model_selection import cross_val_score as sk_cross_val_score
 from sklearn.naive_bayes import BernoulliNB, ComplementNB, GaussianNB, MultinomialNB
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.neural_network import MLPClassifier, MLPRegressor
@@ -590,6 +592,218 @@ class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
 
 
 # ===========================================================================
+# cross_val_score (per-fold scores, no persistence)
+# ===========================================================================
+
+
+@dataclass(slots=True, frozen=True)
+class CrossValScoreArgs:
+    data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
+    estimator: Annotated[str, Arg("estimator", default="random_forest_classifier", doc="Estimator name.")]
+    target: Annotated[str, Arg("target", default="", doc="Name of the target/label column (required).")]
+    id: Annotated[str, Arg("id", default="", doc="Optional id column to exclude from features.")]
+    params: Annotated[str, Arg("params", default="", doc="JSON object of hyperparameters.")]
+    cv: Annotated[int, Arg("cv", default=5, doc="Number of cross-validation folds.")]
+    scoring: Annotated[str, Arg("scoring", default="", doc="Scorer name (default: the estimator's own scorer).")]
+
+
+_CV_SCORE_SCHEMA = pa.schema(
+    [
+        sfield("fold", pa.int64(), "Cross-validation fold index (0-based).", nullable=False),
+        sfield("score", pa.float64(), "Held-out score for this fold.", nullable=False),
+    ]
+)
+
+
+class CrossValScore(SinkBuffer[CrossValScoreArgs, DrainState]):
+    FunctionArguments: ClassVar[type] = CrossValScoreArgs
+
+    class Meta:
+        name = "cross_val_score"
+        description = "Cross-validated held-out scores, one row per fold (no model is stored)"
+        categories = ["models", "supervised", "evaluation"]
+        examples = [
+            FunctionExample(
+                sql=(
+                    "SELECT fold, score FROM sklearn.cross_val_score("
+                    "(SELECT sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target "
+                    "FROM sklearn.iris()), estimator => 'logistic_regression', target => 'target')"
+                ),
+                description="5-fold accuracy of a logistic regression on iris",
+            )
+        ]
+
+    @classmethod
+    def on_bind(cls, params: BindParams[CrossValScoreArgs]) -> BindResponse:
+        a = params.args
+        if not a.target:
+            raise ValueError("cross_val_score requires 'target' (the label column name, e.g. target := 'label')")
+        build_estimator(a.estimator, _parse_params(a.params))
+        input_schema = params.bind_call.input_schema
+        assert input_schema is not None
+        if a.target not in input_schema.names:
+            raise ValueError(f"target column {a.target!r} not found in input; columns: {', '.join(input_schema.names)}")
+        return BindResponse(output_schema=_CV_SCORE_SCHEMA)
+
+    @classmethod
+    def initial_finalize_state(
+        cls, finalize_state_id: bytes, params: TableBufferingParams[CrossValScoreArgs]
+    ) -> DrainState:
+        return DrainState()
+
+    @classmethod
+    def finalize(
+        cls,
+        params: TableBufferingParams[CrossValScoreArgs],
+        finalize_state_id: bytes,
+        state: DrainState,
+        out: OutputCollector,
+    ) -> None:
+        if state.done:
+            out.finish()
+            return
+        state.done = True
+
+        a = params.args
+        input_schema = input_schema_of(params)
+        feats = _features_excluding(input_schema, a.target, a.id)
+        task, estimator = build_estimator(a.estimator, _parse_params(a.params))
+
+        table = cls.buffered_table(params, input_schema)
+        if table is None or table.num_rows == 0:
+            raise ValueError("cross_val_score received no training rows")
+
+        x, y, cat_mask = _xy(table, feats, a.target, task)
+        estimator = wrap_estimator(estimator, cat_mask)
+        scores = sk_cross_val_score(estimator, x, y, cv=a.cv, scoring=(a.scoring or None))
+        out.emit(
+            pa.RecordBatch.from_pydict(
+                {"fold": list(range(len(scores))), "score": [float(s) for s in scores]},
+                schema=params.output_schema,
+            )
+        )
+
+
+# ===========================================================================
+# permutation_importance (model-agnostic feature importance)
+# ===========================================================================
+
+
+@dataclass(slots=True, frozen=True)
+class PermImportanceArgs:
+    data: Annotated[TableInput, Arg(0, doc="Evaluation table (the model's features + the target column).")]
+    model_name: Annotated[
+        str, Arg("model_name", default="", doc="Name of a model in the registry. Provide this OR model.")
+    ]
+    model: Annotated[
+        bytes, Arg("model", default=b"", doc="A model BLOB (as returned by fit). Provide this OR model_name.")
+    ]
+    target: Annotated[str, Arg("target", default="", doc="Name of the target/label column (required).")]
+    n_repeats: Annotated[int, Arg("n_repeats", default=5, doc="Number of times each feature is shuffled.")]
+    scoring: Annotated[str, Arg("scoring", default="", doc="Scorer name (default: the estimator's own scorer).")]
+    random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
+
+
+_PERM_SCHEMA = pa.schema(
+    [
+        sfield("feature", pa.string(), "Feature column name.", nullable=False),
+        sfield("importance_mean", pa.float64(), "Mean drop in score when the feature is shuffled.", nullable=False),
+        sfield("importance_std", pa.float64(), "Std-dev of the importance across repeats.", nullable=False),
+    ]
+)
+
+
+class PermutationImportance(SinkBuffer[PermImportanceArgs, DrainState]):
+    FunctionArguments: ClassVar[type] = PermImportanceArgs
+
+    class Meta:
+        name = "permutation_importance"
+        description = "Model-agnostic feature importance: the drop in score when each feature is shuffled"
+        categories = ["models", "inspection", "evaluation"]
+        examples = [
+            FunctionExample(
+                sql=(
+                    "SELECT * FROM sklearn.permutation_importance((SELECT * FROM sklearn.iris()), "
+                    "model_name := 'iris_rf', target := 'target') ORDER BY importance_mean DESC"
+                ),
+                description="Rank iris features by permutation importance for the stored 'iris_rf' model",
+            )
+        ]
+
+    @classmethod
+    def on_bind(cls, params: BindParams[PermImportanceArgs]) -> BindResponse:
+        a = params.args
+        if not a.model_name and not a.model:
+            raise ValueError("permutation_importance requires either 'model_name' or 'model' (a model BLOB)")
+        if not a.target:
+            raise ValueError("permutation_importance requires 'target' (the label column name)")
+        input_schema = params.bind_call.input_schema
+        assert input_schema is not None
+        if a.model_name:
+            try:
+                meta = get_store().load_meta(a.model_name)
+            except ModelNotFoundError as exc:
+                raise ValueError(f"model {a.model_name!r} not found in the registry") from exc
+        else:
+            meta = unpack_meta(a.model)
+        missing = [f for f in meta.feature_names if f not in input_schema.names]
+        if missing:
+            raise ValueError(
+                f"model requires feature column(s) {', '.join(missing)} not present in the input; "
+                f"model features: {', '.join(meta.feature_names)}"
+            )
+        if a.target not in input_schema.names:
+            raise ValueError(f"target column {a.target!r} not found in input; columns: {', '.join(input_schema.names)}")
+        return BindResponse(output_schema=_PERM_SCHEMA)
+
+    @classmethod
+    def initial_finalize_state(
+        cls, finalize_state_id: bytes, params: TableBufferingParams[PermImportanceArgs]
+    ) -> DrainState:
+        return DrainState()
+
+    @classmethod
+    def finalize(
+        cls,
+        params: TableBufferingParams[PermImportanceArgs],
+        finalize_state_id: bytes,
+        state: DrainState,
+        out: OutputCollector,
+    ) -> None:
+        if state.done:
+            out.finish()
+            return
+        state.done = True
+
+        a = params.args
+        input_schema = input_schema_of(params)
+        estimator, meta = get_store().load(a.model_name) if a.model_name else unpack_model(a.model)
+
+        table = cls.buffered_table(params, input_schema)
+        if table is None or table.num_rows == 0:
+            raise ValueError("permutation_importance received no rows")
+
+        cat_mask = meta.categorical or [False] * len(meta.feature_names)
+        x = build_x(rows_from_table(table, meta.feature_names), cat_mask)
+        y = np.asarray(table.column(a.target).to_numpy(zero_copy_only=False))
+        y = np.rint(y.astype(float)).astype(int) if meta.task == CLASSIFICATION else y.astype(float)
+
+        result = sk_permutation_importance(
+            estimator, x, y, n_repeats=a.n_repeats, random_state=a.random_state, scoring=(a.scoring or None)
+        )
+        out.emit(
+            pa.RecordBatch.from_pydict(
+                {
+                    "feature": list(meta.feature_names),
+                    "importance_mean": [float(v) for v in result.importances_mean],
+                    "importance_std": [float(v) for v in result.importances_std],
+                },
+                schema=params.output_schema,
+            )
+        )
+
+
+# ===========================================================================
 # Registry management: list_models / model_info / drop_model
 # ===========================================================================
 
@@ -726,6 +940,8 @@ MODEL_FUNCTIONS: list[type] = [
     FitModel,
     PredictModel,
     CrossValPredict,
+    CrossValScore,
+    PermutationImportance,
     ListModels,
     ModelInfo,
     DropModel,

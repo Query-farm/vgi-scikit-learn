@@ -174,6 +174,41 @@ FROM sklearn.cross_val_predict(
 JOIN churn c ON c.customer_id = p.customer_id;
 ```
 
+Prefer the held-out score per fold (mean ± spread)? `cross_val_score` returns one
+row per fold:
+
+```sql
+SELECT avg(score) AS mean_cv, stddev(score) AS sd
+FROM sklearn.cross_val_score(
+       (SELECT tenure, monthly_spend, support_tickets, churned FROM churn),
+       estimator := 'gradient_boosting_classifier', target := 'churned', cv := 5);
+```
+
+### Which features matter? (permutation importance)
+
+`permutation_importance` shuffles each feature in turn and measures the drop in a
+stored model's score — model-agnostic, so it works for any estimator:
+
+```sql
+SELECT feature, round(importance_mean, 4) AS importance
+FROM sklearn.permutation_importance(
+       (SELECT * FROM churn), model_name := 'churn_gb', target := 'churned')
+ORDER BY importance DESC;
+```
+
+### Vectorize text
+
+`count_vectorizer` and `tfidf_vectorizer` tokenize a text column into a
+document-term matrix in long format — `(id, term, value)` — which you pivot,
+join, or rank in SQL:
+
+```sql
+-- the 5 highest-weighted terms per document
+SELECT id, term, value
+FROM sklearn.tfidf_vectorizer((SELECT id, body FROM docs), id := 'id', text := 'body')
+QUALIFY row_number() OVER (PARTITION BY id ORDER BY value DESC) <= 5;
+```
+
 ### Tune hyperparameters (grid search)
 
 `grid_search` cross-validates every combination of the hyperparameters you list
@@ -352,8 +387,10 @@ SELECT * FROM sklearn.make_blobs(n_samples := 300, centers := 4);   -- synthetic
 `make_blobs`, `make_moons`, `make_circles`.
 
 **Models:** `fit_<estimator>` (typed, see the table above), generic `fit`
-(escape hatch with JSON `params`), `predict`, `cross_val_predict`, `grid_search`
-(union-typed hyperparameter search), `list_models`, `model_info`, `drop_model`.
+(escape hatch with JSON `params`), `predict`, `cross_val_predict`,
+`cross_val_score` (per-fold held-out scores), `permutation_importance`
+(model-agnostic feature importance), `grid_search` (union-typed hyperparameter
+search), `list_models`, `model_info`, `drop_model`.
 
 **Per-group models:** `fit_model` (aggregate — one model per `GROUP BY` group),
 `predict_one` / `predict_class_one` / `predict_proba_one` (scalars — per-row,
@@ -364,6 +401,7 @@ by-name features).
   `maxabs_scaler`, `normalizer`, `power_transformer`, `quantile_transformer`,
   `binarizer`, `kbins_discretizer`, `simple_imputer`
 - Encoding — `ordinal_encoder`, `one_hot_encoder`
+- Text — `count_vectorizer`, `tfidf_vectorizer` (long format `(id, term, value)`)
 - Decomposition / manifold — `pca`, `truncated_svd`, `tsne`, `isomap`,
   `spectral_embedding`, `mds`
 - Clustering — `kmeans`, `minibatch_kmeans`, `dbscan`, `optics`,

@@ -111,6 +111,30 @@ JOIN sklearn.iris() i USING (sample_id);
 ----
 true
 
+# ---- cross_val_score returns one held-out score per fold ----
+
+query II
+SELECT count(*), bool_and(score BETWEEN 0.0 AND 1.0)
+FROM sklearn.cross_val_score((SELECT * FROM iris_xy),
+     estimator => 'logistic_regression', target => 'target', id => 'sample_id', cv => 5);
+----
+5	true
+
+# ---- permutation_importance ranks the petal features highest for iris_rf ----
+
+query I
+SELECT count(*) FROM sklearn.permutation_importance((SELECT * FROM iris_xy),
+     model_name := 'iris_rf', target := 'target');
+----
+4
+
+query I
+SELECT feature LIKE 'petal%' FROM sklearn.permutation_importance((SELECT * FROM iris_xy),
+     model_name := 'iris_rf', target := 'target')
+ORDER BY importance_mean DESC LIMIT 1;
+----
+true
+
 # ---- a regression model fits and is tagged regression ----
 
 query I

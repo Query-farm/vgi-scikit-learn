@@ -1,0 +1,74 @@
+# name: test/sql/sklearn_text.test
+# description: Text vectorizers (count_vectorizer / tfidf_vectorizer), long format
+# group: [vgi_sklearn]
+
+require-env VGI_SKLEARN_WORKER
+
+require vgi
+
+require httpfs
+
+statement ok
+ATTACH 'sklearn' AS sklearn (TYPE vgi, LOCATION '${VGI_SKLEARN_WORKER}');
+
+statement ok
+CREATE TEMP TABLE docs AS
+SELECT * FROM (VALUES
+  (1, 'the cat sat on the mat'),
+  (2, 'the dog sat on the log'),
+  (3, 'cats and dogs are friends')
+) AS t(id, body);
+
+# ---- count_vectorizer: long format, integer counts ----
+
+# 'the' appears twice in document 1
+query I
+SELECT value FROM sklearn.count_vectorizer((SELECT * FROM docs), id := 'id', text := 'body')
+WHERE id = 1 AND term = 'the';
+----
+2
+
+# counts sum to the number of tokens in document 1 ("the cat sat on the mat" = 6)
+query I
+SELECT sum(value)
+FROM sklearn.count_vectorizer((SELECT * FROM docs), id := 'id', text := 'body')
+WHERE id = 1;
+----
+6
+
+# ---- the text column is inferred when there is a single non-id column ----
+
+query I
+SELECT count(DISTINCT term) > 0
+FROM sklearn.count_vectorizer((SELECT id, body FROM docs), id := 'id');
+----
+true
+
+# ---- English stop words drop 'the' ----
+
+query I
+SELECT count(*)
+FROM sklearn.count_vectorizer((SELECT * FROM docs), id := 'id', text := 'body', stop_words := 'english')
+WHERE term = 'the';
+----
+0
+
+# ---- bigrams appear when ngram_max => 2 ----
+
+query I
+SELECT count(*) > 0
+FROM sklearn.count_vectorizer((SELECT * FROM docs), id := 'id', text := 'body', ngram_max := 2)
+WHERE term LIKE '% %';
+----
+true
+
+# ---- tfidf_vectorizer: float weights; the distinctive term ranks first ----
+
+query I
+SELECT term FROM sklearn.tfidf_vectorizer((SELECT * FROM docs), id := 'id', text := 'body')
+WHERE id = 3 ORDER BY value DESC LIMIT 1;
+----
+cats
+
+statement ok
+DETACH sklearn;
