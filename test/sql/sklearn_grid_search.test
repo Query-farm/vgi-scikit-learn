@@ -78,5 +78,32 @@ SELECT * FROM sklearn.grid_search((SELECT * FROM iris), target := 'nope',
 ----
 not found in input
 
+# ---- randomized_search samples n_iter combinations from the same union grid ----
+
+query I
+SELECT count(*) FROM sklearn.randomized_search((SELECT * FROM iris), target := 'target', id := 'sample_id',
+     n_iter := 4, estimator := union_value(random_forest_classifier := {
+       'n_estimators': [50, 100, 200], 'max_depth': [2, 3, 5]}));
+----
+4
+
+# the refit best model is on the rank-1 row and predicts
+statement ok
+SET VARIABLE rsm = (SELECT model FROM sklearn.randomized_search((SELECT * FROM iris), target := 'target',
+     id := 'sample_id', n_iter := 3, estimator := union_value(random_forest_classifier := {
+       'n_estimators': [50, 100, 200]})) WHERE model IS NOT NULL LIMIT 1);
+
+query I
+SELECT count(*) FROM sklearn.predict((SELECT * FROM iris), model := getvariable('rsm'), id := 'sample_id');
+----
+150
+
+# n_iter is capped at the number of distinct combinations (no error when too large)
+query I
+SELECT count(*) FROM sklearn.randomized_search((SELECT * FROM iris), target := 'target', id := 'sample_id',
+     n_iter := 99, estimator := union_value(ridge := {'alpha': [0.1, 1.0]}));
+----
+2
+
 statement ok
 DETACH sklearn;

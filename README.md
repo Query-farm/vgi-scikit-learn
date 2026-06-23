@@ -425,8 +425,8 @@ SELECT * FROM sklearn.make_blobs(n_samples := 300, centers := 4);   -- synthetic
 **Models:** `fit_<estimator>` (typed, see the table above), generic `fit`
 (escape hatch with JSON `params`), `predict`, `cross_val_predict`,
 `cross_val_score` (per-fold held-out scores), `permutation_importance`
-(model-agnostic feature importance), `grid_search` (union-typed hyperparameter
-search), `list_models`, `model_info`, `drop_model`.
+(model-agnostic feature importance), `grid_search` / `randomized_search`
+(union-typed hyperparameter search), `list_models`, `model_info`, `drop_model`.
 
 **Per-group models:** `fit_model` (aggregate — one model per `GROUP BY` group),
 `predict_one` / `predict_class_one` / `predict_proba_one` (scalars — per-row,
@@ -440,9 +440,6 @@ by-name features).
 - Text — `count_vectorizer`, `tfidf_vectorizer` (long format `(id, term, value)`)
 - Feature selection — `select_k_best`, `variance_threshold` (per-feature scores
   + a `selected` flag)
-
-**Stored transformers** (fit once, apply to new data — like `fit`/`predict`):
-`fit_transformer`, `apply_transform`, `list_transformers`, `drop_transformer`.
 - Decomposition / manifold — `pca`, `truncated_svd`, `tsne`, `isomap`,
   `spectral_embedding`, `mds`
 - Clustering — `kmeans`, `minibatch_kmeans`, `dbscan`, `optics`,
@@ -450,6 +447,9 @@ by-name features).
   `gaussian_mixture`
 - Outlier detection — `isolation_forest`, `local_outlier_factor`,
   `one_class_svm`, `elliptic_envelope`
+
+**Stored transformers** (fit once, apply to new data — like `fit`/`predict`):
+`fit_transformer`, `apply_transform`, `list_transformers`, `drop_transformer`.
 
 **Metric aggregates** over `(y_true, y_pred)`:
 - Regression — `mean_squared_error`, `root_mean_squared_error`,
@@ -465,7 +465,8 @@ by-name features).
   `adjusted_mutual_info_score`, `homogeneity_score`, `completeness_score`,
   `v_measure_score`, `fowlkes_mallows_score`
 
-**Metrics over a table:** `confusion_matrix` (long format), `silhouette_score`.
+**Metrics over a table:** `confusion_matrix` (long format), `silhouette_score`,
+and the binary curves `roc_curve`, `precision_recall_curve`, `calibration_curve`.
 
 **Manage the registry:** `SELECT * FROM sklearn.list_models();`,
 `sklearn.model_info('name')`, `sklearn.drop_model('name')`.

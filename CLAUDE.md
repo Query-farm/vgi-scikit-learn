@@ -26,7 +26,7 @@ vgi_sklearn/
   stored_transforms.py fit_transformer / apply_transform (persisted, reusable transformers)
   models.py           fit / predict / cross_val_predict / cross_val_score / permutation_importance + registry mgmt
   typed_models.py     generated fit_<estimator> functions with typed hyperparams
-  search.py           grid_search — discriminated-union (sparse) hyperparameter search
+  search.py           grid_search / randomized_search — discriminated-union (sparse) hyperparameter search
   grouped.py          per-group modeling: fit_model (aggregate) + predict_* (scalars)
   registry.py         ModelStore + LocalDiskStore (S3/R2 seam) + model-BLOB pack/unpack
   buffering.py        shared sink/combine/serialize/matrix helpers (numeric validation)

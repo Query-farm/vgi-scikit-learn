@@ -11,7 +11,7 @@ import pyarrow as pa
 import pytest
 
 try:
-    from vgi_sklearn.search import _GRID_UNION, _json_safe, _param_grid
+    from vgi_sklearn.search import _GRID_UNION, _grid_size, _json_safe, _param_grid
     from vgi_sklearn.typed_models import _HPARAMS
 except ImportError:  # pragma: no cover - depends on the installed vgi-python
     pytest.skip("vgi-python without union-tag support", allow_module_level=True)
@@ -54,3 +54,11 @@ def test_json_safe_tuples() -> None:
     assert _json_safe((50,)) == [50]
     assert _json_safe(5) == 5
     assert _json_safe(None) is None
+
+
+class TestGridSize:
+    def test_product_of_list_lengths(self) -> None:
+        assert _grid_size({"a": [1, 2, 3], "b": [10, 20]}) == 6
+
+    def test_empty_grid_is_one(self) -> None:
+        assert _grid_size({}) == 1  # randomized_search then caps n_iter at 1

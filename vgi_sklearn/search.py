@@ -28,7 +28,7 @@ from typing import Annotated, Any, ClassVar
 
 import pyarrow as pa
 import sklearn
-from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 from vgi import TaggedUnion
 from vgi.arguments import Arg, TableInput
 from vgi.invocation import BindResponse
@@ -134,19 +134,7 @@ class GridSearch(SinkBuffer[GridSearchArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[GridSearchArgs]) -> BindResponse:
-        a = params.args
-        if not a.target:
-            raise ValueError("grid_search requires 'target' (the label column name, e.g. target := 'label')")
-        tag = getattr(a.estimator, "tag", None)
-        if tag is not None and tag not in _ESTIMATORS:
-            raise ValueError(f"unknown estimator {tag!r}; choose one of: {', '.join(sorted(_ESTIMATORS))}")
-        if a.model_name:
-            validate_name(a.model_name)
-        input_schema = params.bind_call.input_schema
-        assert input_schema is not None
-        if a.target not in input_schema.names:
-            raise ValueError(f"target column {a.target!r} not found in input; columns: {', '.join(input_schema.names)}")
-        return BindResponse(output_schema=_SEARCH_SCHEMA)
+        return _validate_search_bind(cls.Meta.name, params)
 
     @classmethod
     def initial_finalize_state(
@@ -162,70 +150,181 @@ class GridSearch(SinkBuffer[GridSearchArgs, DrainState]):
         state: DrainState,
         out: OutputCollector,
     ) -> None:
-        if state.done:
-            out.finish()
-            return
-        state.done = True
-
-        a = params.args
-        tag = a.estimator.tag
-        if tag not in _ESTIMATORS:
-            raise ValueError(f"unknown estimator {tag!r}")
-        task, est_cls, defaults = _ESTIMATORS[tag]
-        grid = _param_grid(tag, a.estimator.value)
-
-        input_schema = input_schema_of(params)
-        feats = _features_excluding(input_schema, a.target, a.id)
-        table = cls.buffered_table(params, input_schema)
-        if table is None or table.num_rows == 0:
-            raise ValueError("grid_search received no training rows")
-
-        x, y, cat_mask = _xy(table, feats, a.target, task)
-        # When features are categorical the estimator becomes a one-hot Pipeline,
-        # so grid keys must address the estimator step (est__<param>).
-        wrapped = any(cat_mask)
-        estimator = wrap_estimator(est_cls(**defaults), cat_mask)
-        search = GridSearchCV(estimator, prefix_grid(grid, wrapped), cv=a.cv, scoring=(a.scoring or None), refit=True)
-        search.fit(x, y)
-
-        results = search.cv_results_
-        n = len(results["params"])
-        best_idx = int(search.best_index_)
-
-        classes = [int(c) for c in search.best_estimator_.classes_] if task == CLASSIFICATION else None
-        meta = ModelMetadata(
-            name=a.model_name,
-            estimator=tag,
-            task=task,
-            target=a.target,
-            feature_names=feats,
-            categorical=cat_mask,
-            params={k: _json_safe(v) for k, v in _strip_prefix(search.best_params_).items()},
-            classes=classes,
-            n_samples=int(table.num_rows),
-            n_features=len(feats),
-            train_score=float(search.best_score_),
-            sklearn_version=sklearn.__version__,
-            created_at=now_iso(),
+        _run_search(
+            cls,
+            params,
+            state,
+            out,
+            lambda est, space, a: GridSearchCV(est, space, cv=a.cv, scoring=(a.scoring or None), refit=True),
         )
-        if a.model_name:
-            get_store().save(search.best_estimator_, meta)
-        best_blob = pack_model(search.best_estimator_, meta)
 
-        out.emit(
-            pa.RecordBatch.from_pydict(
-                {
-                    "estimator": [tag] * n,
-                    "params": [
-                        json.dumps({k: _json_safe(v) for k, v in _strip_prefix(p).items()}) for p in results["params"]
-                    ],
-                    "mean_test_score": [float(s) for s in results["mean_test_score"]],
-                    "std_test_score": [float(s) for s in results["std_test_score"]],
-                    "rank": [int(r) for r in results["rank_test_score"]],
-                    "model": [best_blob if i == best_idx else None for i in range(n)],
-                },
-                schema=params.output_schema,
+
+def _validate_search_bind(name: str, params: BindParams[Any]) -> BindResponse:
+    """Shared bind validation for grid_search / randomized_search."""
+    a = params.args
+    if not a.target:
+        raise ValueError(f"{name} requires 'target' (the label column name, e.g. target := 'label')")
+    tag = getattr(a.estimator, "tag", None)
+    if tag is not None and tag not in _ESTIMATORS:
+        raise ValueError(f"unknown estimator {tag!r}; choose one of: {', '.join(sorted(_ESTIMATORS))}")
+    if a.model_name:
+        validate_name(a.model_name)
+    input_schema = params.bind_call.input_schema
+    assert input_schema is not None
+    if a.target not in input_schema.names:
+        raise ValueError(f"target column {a.target!r} not found in input; columns: {', '.join(input_schema.names)}")
+    return BindResponse(output_schema=_SEARCH_SCHEMA)
+
+
+def _grid_size(space: dict[str, Any]) -> int:
+    """Total number of combinations in a (list-valued) parameter grid."""
+    total = 1
+    for values in space.values():
+        total *= max(1, len(values))
+    return total
+
+
+def _run_search(cls: type, params: Any, state: DrainState, out: OutputCollector, build_search: Any) -> None:
+    """Shared finalize for the search functions; ``build_search(est, space, args)`` makes the CV object."""
+    if state.done:
+        out.finish()
+        return
+    state.done = True
+
+    a = params.args
+    tag = a.estimator.tag
+    if tag not in _ESTIMATORS:
+        raise ValueError(f"unknown estimator {tag!r}")
+    task, est_cls, defaults = _ESTIMATORS[tag]
+    grid = _param_grid(tag, a.estimator.value)
+
+    input_schema = input_schema_of(params)
+    feats = _features_excluding(input_schema, a.target, a.id)
+    table = cls.buffered_table(params, input_schema)
+    if table is None or table.num_rows == 0:
+        raise ValueError(f"{cls.Meta.name} received no training rows")
+
+    x, y, cat_mask = _xy(table, feats, a.target, task)
+    # When features are categorical the estimator becomes a one-hot Pipeline,
+    # so grid keys must address the estimator step (est__<param>).
+    wrapped = any(cat_mask)
+    estimator = wrap_estimator(est_cls(**defaults), cat_mask)
+    search = build_search(estimator, prefix_grid(grid, wrapped), a)
+    search.fit(x, y)
+
+    results = search.cv_results_
+    n = len(results["params"])
+    best_idx = int(search.best_index_)
+
+    classes = [int(c) for c in search.best_estimator_.classes_] if task == CLASSIFICATION else None
+    meta = ModelMetadata(
+        name=a.model_name,
+        estimator=tag,
+        task=task,
+        target=a.target,
+        feature_names=feats,
+        categorical=cat_mask,
+        params={k: _json_safe(v) for k, v in _strip_prefix(search.best_params_).items()},
+        classes=classes,
+        n_samples=int(table.num_rows),
+        n_features=len(feats),
+        train_score=float(search.best_score_),
+        sklearn_version=sklearn.__version__,
+        created_at=now_iso(),
+    )
+    if a.model_name:
+        get_store().save(search.best_estimator_, meta)
+    best_blob = pack_model(search.best_estimator_, meta)
+
+    out.emit(
+        pa.RecordBatch.from_pydict(
+            {
+                "estimator": [tag] * n,
+                "params": [
+                    json.dumps({k: _json_safe(v) for k, v in _strip_prefix(p).items()}) for p in results["params"]
+                ],
+                "mean_test_score": [float(s) for s in results["mean_test_score"]],
+                "std_test_score": [float(s) for s in results["std_test_score"]],
+                "rank": [int(r) for r in results["rank_test_score"]],
+                "model": [best_blob if i == best_idx else None for i in range(n)],
+            },
+            schema=params.output_schema,
+        )
+    )
+
+
+@dataclass(slots=True, frozen=True)
+class RandomizedSearchArgs:
+    data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
+    estimator: Annotated[
+        TaggedUnion,
+        Arg(
+            "estimator",
+            arrow_type=_GRID_UNION,
+            doc="union_value(<estimator> := {param: [values], ...}); the tag picks the estimator.",
+        ),
+    ]
+    target: Annotated[str, Arg("target", default="", doc="Name of the target/label column (required).")]
+    id: Annotated[str, Arg("id", default="", doc="Optional id column to exclude from features.")]
+    n_iter: Annotated[int, Arg("n_iter", default=10, doc="Number of random combinations to sample.")]
+    cv: Annotated[int, Arg("cv", default=5, doc="Number of cross-validation folds.")]
+    scoring: Annotated[str, Arg("scoring", default="", doc="Scorer name (default: the estimator's own scorer).")]
+    random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed for the sampler.")]
+    model_name: Annotated[str, Arg("model_name", default="", doc="Optional registry name for the refit best model.")]
+
+
+class RandomizedSearch(SinkBuffer[RandomizedSearchArgs, DrainState]):
+    FunctionArguments: ClassVar[type] = RandomizedSearchArgs
+
+    class Meta:
+        name = "randomized_search"
+        description = "Cross-validated randomized search: sample n_iter hyperparameter combinations"
+        categories = ["models", "supervised", "tuning"]
+        examples = [
+            FunctionExample(
+                sql=(
+                    "SELECT params, mean_test_score, rank FROM sklearn.randomized_search("
+                    "(SELECT * FROM sklearn.iris()), target := 'target', id := 'sample_id', n_iter := 4, "
+                    "estimator := union_value(random_forest_classifier := "
+                    "{'n_estimators': [100, 200, 300], 'max_depth': [3, 5, 8]})) ORDER BY rank"
+                ),
+                description="Randomized-search a random forest on iris",
             )
+        ]
+
+    @classmethod
+    def on_bind(cls, params: BindParams[RandomizedSearchArgs]) -> BindResponse:
+        return _validate_search_bind(cls.Meta.name, params)
+
+    @classmethod
+    def initial_finalize_state(
+        cls, finalize_state_id: bytes, params: TableBufferingParams[RandomizedSearchArgs]
+    ) -> DrainState:
+        return DrainState()
+
+    @classmethod
+    def finalize(
+        cls,
+        params: TableBufferingParams[RandomizedSearchArgs],
+        finalize_state_id: bytes,
+        state: DrainState,
+        out: OutputCollector,
+    ) -> None:
+        # n_iter can't exceed the number of distinct combinations (the grid is discrete).
+        _run_search(
+            cls,
+            params,
+            state,
+            out,
+            lambda est, space, a: RandomizedSearchCV(
+                est,
+                space,
+                n_iter=min(a.n_iter, _grid_size(space)),
+                cv=a.cv,
+                scoring=(a.scoring or None),
+                random_state=a.random_state,
+                refit=True,
+            ),
         )
 
 
@@ -242,4 +341,4 @@ def _json_safe(v: Any) -> Any:
     return v
 
 
-SEARCH_FUNCTIONS: list[type] = [GridSearch]
+SEARCH_FUNCTIONS: list[type] = [GridSearch, RandomizedSearch]
