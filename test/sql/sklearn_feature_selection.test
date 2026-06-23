@@ -1,0 +1,67 @@
+# name: test/sql/sklearn_feature_selection.test
+# description: Feature selection scoring tables (select_k_best / variance_threshold)
+# group: [vgi_sklearn]
+
+require-env VGI_SKLEARN_WORKER
+
+require vgi
+
+require httpfs
+
+statement ok
+ATTACH 'sklearn' AS sklearn (TYPE vgi, LOCATION '${VGI_SKLEARN_WORKER}');
+
+statement ok
+CREATE TEMP VIEW irisf AS
+  SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target
+  FROM sklearn.iris();
+
+# ---- select_k_best: one row per feature, exactly k flagged selected ----
+
+query II
+SELECT count(*), sum(selected::INT)
+FROM sklearn.select_k_best((SELECT * FROM irisf), target := 'target', id := 'sample_id', k := 2);
+----
+4	2
+
+# the petal features are the most informative for iris -> they are the selected pair
+query I
+SELECT bool_and(feature LIKE 'petal%')
+FROM sklearn.select_k_best((SELECT * FROM irisf), target := 'target', id := 'sample_id', k := 2)
+WHERE selected;
+----
+true
+
+# mutual-information scorers have no p-value
+query I
+SELECT bool_and(p_value IS NULL)
+FROM sklearn.select_k_best((SELECT * FROM irisf), target := 'target', id := 'sample_id',
+                           k := 2, score_func := 'mutual_info_classif');
+----
+true
+
+# f_regression works on a continuous target
+query II
+SELECT count(*), sum(selected::INT)
+FROM sklearn.select_k_best((SELECT * FROM sklearn.diabetes()), target := 'target', id := 'sample_id',
+                           k := 3, score_func := 'f_regression');
+----
+10	3
+
+# an unknown score_func is rejected at bind
+statement error
+SELECT * FROM sklearn.select_k_best((SELECT * FROM irisf), target := 'target', score_func := 'nope');
+----
+
+# ---- variance_threshold: per-feature variance + flag ----
+
+query I
+SELECT bool_and((variance > 0.5) = selected)
+FROM sklearn.variance_threshold(
+  (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm FROM sklearn.iris()),
+  id := 'sample_id', threshold := 0.5);
+----
+true
+
+statement ok
+DETACH sklearn;

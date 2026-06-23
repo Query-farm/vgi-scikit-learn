@@ -196,6 +196,18 @@ FROM sklearn.permutation_importance(
 ORDER BY importance DESC;
 ```
 
+For a quick *model-free* filter, `select_k_best` scores each feature against the
+target (ANOVA F, mutual information, or chi²) and flags the top `k`;
+`variance_threshold` drops near-constant features. Both return one row per
+feature, so you pick the winners in SQL:
+
+```sql
+SELECT feature FROM sklearn.select_k_best(
+         (SELECT tenure, monthly_spend, support_tickets, churned FROM churn),
+         target := 'churned', k := 2)
+WHERE selected;
+```
+
 ### Vectorize text
 
 `count_vectorizer` and `tfidf_vectorizer` tokenize a text column into a
@@ -402,6 +414,8 @@ by-name features).
   `binarizer`, `kbins_discretizer`, `simple_imputer`
 - Encoding — `ordinal_encoder`, `one_hot_encoder`
 - Text — `count_vectorizer`, `tfidf_vectorizer` (long format `(id, term, value)`)
+- Feature selection — `select_k_best`, `variance_threshold` (per-feature scores
+  + a `selected` flag)
 - Decomposition / manifold — `pca`, `truncated_svd`, `tsne`, `isomap`,
   `spectral_embedding`, `mds`
 - Clustering — `kmeans`, `minibatch_kmeans`, `dbscan`, `optics`,

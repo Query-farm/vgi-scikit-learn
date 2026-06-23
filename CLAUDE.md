@@ -22,6 +22,7 @@ vgi_sklearn/
   transforms.py       unsupervised fit_transform + ordinal/one_hot encoders (buffering)
   features.py         categorical (string) detection + auto one-hot Pipeline wrapping
   text.py             count/tfidf vectorizers over a text column (long-format output)
+  feature_selection.py select_k_best / variance_threshold (per-feature scores + selected flag)
   models.py           fit / predict / cross_val_predict / cross_val_score / permutation_importance + registry mgmt
   typed_models.py     generated fit_<estimator> functions with typed hyperparams
   search.py           grid_search — discriminated-union (sparse) hyperparameter search
