@@ -132,6 +132,29 @@ Available estimators (each is `sklearn.fit_<name>`):
 > `sklearn.fit((SELECT ...), estimator := 'ridge', target := 'y', params := '{"alpha": 0.3, "solver": "svd"}')`
 > accepts any scikit-learn parameter as a JSON object.
 
+### Build a pipeline (preprocess → model in one artifact)
+
+`fit_pipeline` chains preprocessing steps and a final estimator, fits them
+together, and stores the result as a single model — so it trains and serves
+without leakage, and you score it with the **same `predict`** (no separate apply):
+
+```sql
+SELECT model_name, estimator, n_features
+FROM sklearn.fit_pipeline(
+  (SELECT tenure, monthly_spend, support_tickets, churned FROM churn),
+  steps := '[{"kind": "simple_imputer", "params": {"strategy": "median"}},
+             {"kind": "standard_scaler"},
+             {"kind": "pca", "params": {"n_components": 3}}]',
+  estimator := 'logistic_regression', target := 'churned', model_name := 'churn_pipe');
+
+-- predict (and cross_val_predict, permutation_importance, ...) work as usual
+SELECT * FROM sklearn.predict((SELECT * FROM new_customers), model_name := 'churn_pipe', id := 'customer_id');
+```
+
+`steps` is a JSON array of `{kind, params}`; `kind` is any stored-transformer kind
+(`standard_scaler`, `simple_imputer`, `pca`, `truncated_svd`, …). String features
+are one-hot-encoded ahead of the steps automatically.
+
 Every `fit_…` call **returns the trained model as a `model` BLOB column** *and*,
 when you pass `model_name`, saves it to the registry. So you choose where the
 model lives (see [Where models live](#where-models-live)).
@@ -423,7 +446,8 @@ SELECT * FROM sklearn.make_blobs(n_samples := 300, centers := 4);   -- synthetic
 `make_blobs`, `make_moons`, `make_circles`.
 
 **Models:** `fit_<estimator>` (typed, see the table above), generic `fit`
-(escape hatch with JSON `params`), `predict`, `cross_val_predict`,
+(escape hatch with JSON `params`), `fit_pipeline` (preprocessing steps +
+estimator as one model), `predict`, `cross_val_predict`,
 `cross_val_score` (per-fold held-out scores), `permutation_importance`
 (model-agnostic feature importance), `grid_search` / `randomized_search`
 (union-typed hyperparameter search), `list_models`, `model_info`, `drop_model`.

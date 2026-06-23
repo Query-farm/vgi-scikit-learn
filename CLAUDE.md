@@ -25,6 +25,7 @@ vgi_sklearn/
   feature_selection.py select_k_best / variance_threshold (per-feature scores + selected flag)
   stored_transforms.py fit_transformer / apply_transform (persisted, reusable transformers)
   models.py           fit / predict / cross_val_predict / cross_val_score / permutation_importance + registry mgmt
+  pipeline.py         fit_pipeline — preprocessing steps + estimator as one stored model (predict unchanged)
   typed_models.py     generated fit_<estimator> functions with typed hyperparams
   search.py           grid_search / randomized_search — discriminated-union (sparse) hyperparameter search
   grouped.py          per-group modeling: fit_model (aggregate) + predict_* (scalars)
