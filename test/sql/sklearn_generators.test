@@ -59,6 +59,12 @@ SELECT count(*), count(DISTINCT target) FROM sklearn.make_moons(n_samples => 120
 ----
 120	2
 
+# circles are 2-feature binary too
+query II
+SELECT count(*), count(DISTINCT target) FROM sklearn.make_circles(n_samples => 120, noise => 0.05);
+----
+120	2
+
 # generators are reproducible for a fixed random_state
 query I
 SELECT count(*) FROM (

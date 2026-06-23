@@ -120,6 +120,43 @@ FROM sklearn.kbins_discretizer((SELECT * FROM iris_feats), id => 'sample_id', n_
 ----
 4
 
+# ---- Normalizer scales each row to unit L2 norm ----
+
+query I
+SELECT bool_and(abs(sepal_length_cm*sepal_length_cm + sepal_width_cm*sepal_width_cm
+                  + petal_length_cm*petal_length_cm + petal_width_cm*petal_width_cm - 1.0) < 1e-9)
+FROM sklearn.normalizer((SELECT * FROM iris_feats), id => 'sample_id');
+----
+true
+
+# ---- SimpleImputer fills NULLs with a column statistic (rows preserved) ----
+
+query II
+SELECT count(*), bool_and(sepal_length_cm IS NOT NULL)
+FROM sklearn.simple_imputer(
+  (SELECT sample_id, CASE WHEN sample_id = 0 THEN NULL ELSE sepal_length_cm END AS sepal_length_cm,
+          sepal_width_cm, petal_length_cm, petal_width_cm FROM sklearn.iris()),
+  id => 'sample_id', strategy => 'median');
+----
+150	true
+
+# ---- TruncatedSVD reduces to component_1..k (k < n_features) ----
+
+query I
+SELECT count(*) FROM sklearn.truncated_svd((SELECT * FROM iris_feats), id => 'sample_id', n_components => 2)
+WHERE component_1 IS NOT NULL AND component_2 IS NOT NULL;
+----
+150
+
+# ---- DBSCAN labels well-separated blobs (>=1 cluster, noise allowed as -1) ----
+
+query I
+SELECT count(DISTINCT cluster) >= 1 AND min(cluster) >= -1 FROM sklearn.dbscan(
+  (SELECT sample_id, feature_0, feature_1 FROM sklearn.make_blobs(n_samples => 150, centers => 3)),
+  id => 'sample_id', eps => 1.5);
+----
+true
+
 # ---- ordinal_encoder: one integer code column per string feature ----
 
 # 150 rows preserved; the 3 species map to exactly 3 distinct codes {0,1,2}

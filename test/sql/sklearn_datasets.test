@@ -59,5 +59,11 @@ SELECT round(avg(petal_length_cm), 3) FROM sklearn.iris() WHERE target_name = 's
 ----
 1.462
 
+# digits: 1797 handwritten-digit rows across 10 classes
+query II
+SELECT count(*), count(DISTINCT target) FROM sklearn.digits();
+----
+1797	10
+
 statement ok
 DETACH sklearn;

@@ -58,6 +58,22 @@ FROM (VALUES (3.0, 2.5), (1.0, 1.2), (5.0, 4.5)) AS t(actual, predicted);
 ----
 0.011495	0.2
 
+# score-based metrics: y_pred is a probability/score, not a hard label
+statement ok
+CREATE TEMP TABLE scored AS
+SELECT * FROM (VALUES
+  (0, 0.2), (0, 0.3), (0, 0.4), (1, 0.6), (1, 0.7), (1, 0.8), (0, 0.55), (1, 0.9)
+) AS t(y, s);
+
+query IIII
+SELECT round(sklearn.roc_auc_score(y, s), 4),
+       round(sklearn.average_precision_score(y, s), 4),
+       round(sklearn.brier_score_loss(y, s), 4),
+       round(sklearn.log_loss(y, s), 4)
+FROM scored;
+----
+1.0	1.0	0.1116	0.3856
+
 # Grouped metrics: one perfect group, one inverted group
 statement ok
 CREATE TEMP TABLE g AS
