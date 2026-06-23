@@ -106,15 +106,13 @@ arg, while `fit_<estimator>` exposes them as typed named args.
   `vgi.TaggedUnion` (`.tag` = estimator, `.value` = grid dict); omitted (NULL)
   hyperparameters stay at defaults. Returns the CV leaderboard (one row per
   combo) with the refit best model BLOB on the single `best_index_` row — grab
-  it with `WHERE model IS NOT NULL` (rank 1 can tie). **Dependency/gating:** this
-  needs a vgi-python whose argument decoder preserves union tags (`TaggedUnion`,
-  > 0.8.2). `worker.py` imports `search` under try/except so older vgi-python
-  just omits `grid_search`; the SQL test is gated `require-env
-  VGI_SKLEARN_GRID_SEARCH` (set only in `make test-stdio`, which runs the local
-  checkout) and `tests/test_search.py` skips when `TaggedUnion` is absent — so CI
-  on the released PyPI vgi-python stays green. When a vgi-python with the fix is
-  released, bump the pin and drop the gating. (Dense unions are still unsupported
-  by the C++ extension; `union_value` produces sparse, which works.)
+  it with `WHERE model IS NOT NULL` (rank 1 can tie). **Dependency:** this needs a
+  vgi-python whose argument decoder preserves union tags (`vgi.TaggedUnion`),
+  shipped in **0.8.3** — now the hard pin (`>=0.8.3`), so `grid_search` is a
+  first-class, ungated function: `worker.py` imports `search` directly, the SQL
+  test runs unconditionally, and `tests/test_search.py` no longer skips. (Dense
+  unions are still unsupported by the C++ extension; `union_value` produces
+  sparse, which works.)
 - **Per-group modeling (grouped.py) is an aggregate + scalars** — table functions
   can't take correlated/lateral args, so column-driven dispatch is impossible;
   `fit_model` is an `AggregateFunction` (`GROUP BY` partitions for free, returns

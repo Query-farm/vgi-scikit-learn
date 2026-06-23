@@ -1,20 +1,14 @@
 """Unit tests for grid_search's union type + param-grid translation.
 
-grid_search needs union-typed arguments (a newer vgi-python); when the installed
-vgi-python lacks ``TaggedUnion`` the module can't import, so the whole suite is
-skipped. End-to-end coverage lives in test/sql/sklearn_grid_search.test.
+End-to-end coverage lives in test/sql/sklearn_grid_search.test.
 """
 
 from __future__ import annotations
 
 import pyarrow as pa
-import pytest
 
-try:
-    from vgi_sklearn.search import _GRID_UNION, _grid_size, _json_safe, _param_grid
-    from vgi_sklearn.typed_models import _HPARAMS
-except ImportError:  # pragma: no cover - depends on the installed vgi-python
-    pytest.skip("vgi-python without union-tag support", allow_module_level=True)
+from vgi_sklearn.search import _GRID_UNION, _grid_size, _json_safe, _param_grid
+from vgi_sklearn.typed_models import _HPARAMS
 
 
 class TestGridUnionType:

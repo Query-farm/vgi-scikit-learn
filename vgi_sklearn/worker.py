@@ -29,20 +29,13 @@ from vgi_sklearn.grouped import GROUPED_FUNCTIONS
 from vgi_sklearn.metrics import METRIC_FUNCTIONS
 from vgi_sklearn.models import MODEL_FUNCTIONS
 from vgi_sklearn.pipeline import PIPELINE_FUNCTIONS
+from vgi_sklearn.search import SEARCH_FUNCTIONS
 from vgi_sklearn.splitters import SPLITTER_FUNCTIONS
 from vgi_sklearn.stored_transforms import STORED_TRANSFORM_FUNCTIONS
 from vgi_sklearn.table_metrics import TABLE_METRIC_FUNCTIONS
 from vgi_sklearn.text import TEXT_FUNCTIONS
 from vgi_sklearn.transforms import TRANSFORM_FUNCTIONS
 from vgi_sklearn.typed_models import TYPED_FIT_FUNCTIONS
-
-try:
-    # grid_search needs union-typed arguments with tag preservation, added in a
-    # newer vgi-python. Against an older vgi-python the import fails and the
-    # function is simply not registered (everything else still works).
-    from vgi_sklearn.search import SEARCH_FUNCTIONS
-except ImportError:  # pragma: no cover - depends on the installed vgi-python
-    SEARCH_FUNCTIONS = []
 
 log = logging.getLogger(__name__)
 

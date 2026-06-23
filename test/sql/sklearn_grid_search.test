@@ -4,11 +4,6 @@
 
 require-env VGI_SKLEARN_WORKER
 
-# grid_search needs union-typed args (a vgi-python with tag-preserving decode).
-# Gated so CI against the released PyPI vgi-python skips it; the Makefile sets
-# this when running against the local checkout that has the fix.
-require-env VGI_SKLEARN_GRID_SEARCH
-
 require vgi
 
 require httpfs
