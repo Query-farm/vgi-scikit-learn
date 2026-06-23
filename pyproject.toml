@@ -21,7 +21,7 @@ classifiers = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    "vgi-python[http]>=0.8.1",
+    "vgi-python[http]>=0.8.3",
     "scikit-learn>=1.5",
     "numpy",
     "skops>=0.11",
