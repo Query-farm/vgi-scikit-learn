@@ -301,6 +301,15 @@ class PredictOne(ScalarFunction):
         name = "predict_one"
         description = "Score a row through a model BLOB; returns a numeric prediction"
         categories = ["models", "inference", "grouped"]
+        examples = [
+            FunctionExample(
+                sql=(
+                    "SELECT sklearn.predict_one(m.m.model, {'tenure': c.tenure, 'spend': c.spend}) "
+                    "FROM customers c JOIN models m USING (region)"
+                ),
+                description="Score each customer with their group's regression model",
+            )
+        ]
 
     @classmethod
     def compute(
@@ -319,6 +328,15 @@ class PredictClassOne(ScalarFunction):
         name = "predict_class_one"
         description = "Score a row through a classifier BLOB; returns the class label as text"
         categories = ["models", "inference", "grouped"]
+        examples = [
+            FunctionExample(
+                sql=(
+                    "SELECT sklearn.predict_class_one(m.m.model, {'tenure': c.tenure, 'spend': c.spend}) "
+                    "FROM customers c JOIN models m USING (region)"
+                ),
+                description="Predict each customer's class label with their group's classifier",
+            )
+        ]
 
     @classmethod
     def compute(
@@ -337,6 +355,15 @@ class PredictProbaOne(ScalarFunction):
         name = "predict_proba_one"
         description = "Class probabilities for a row through a classifier BLOB (DOUBLE[])"
         categories = ["models", "inference", "grouped"]
+        examples = [
+            FunctionExample(
+                sql=(
+                    "SELECT sklearn.predict_proba_one(m.m.model, {'tenure': c.tenure, 'spend': c.spend}) "
+                    "FROM customers c JOIN models m USING (region)"
+                ),
+                description="Per-class probabilities from each customer's group classifier",
+            )
+        ]
 
     @classmethod
     def compute(
