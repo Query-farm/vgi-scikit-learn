@@ -23,6 +23,7 @@ vgi_sklearn/
   features.py         categorical (string) detection + auto one-hot Pipeline wrapping
   text.py             count/tfidf vectorizers over a text column (long-format output)
   feature_selection.py select_k_best / variance_threshold (per-feature scores + selected flag)
+  stored_transforms.py fit_transformer / apply_transform (persisted, reusable transformers)
   models.py           fit / predict / cross_val_predict / cross_val_score / permutation_importance + registry mgmt
   typed_models.py     generated fit_<estimator> functions with typed hyperparams
   search.py           grid_search — discriminated-union (sparse) hyperparameter search
@@ -244,3 +245,14 @@ The Docker smoke test verifies imports + `/health`.
 for S3/R2 is the planned next backend and drops in here without touching
 `models.py`. `predict` warns via `duckdb_logs()` if the worker's scikit-learn
 version differs from the one a model was fitted with.
+
+**Fitted transformers** (`fit_transformer`/`apply_transform`, stored_transforms.py)
+use a *parallel* `registry.get_transformer_store()` seam rooted at
+`<SKLEARN_MODELS_DIR>/transformers/` — a separate subdir so `list_models` and
+`list_transformers` never see each other's `.skops`/`.json`. Same BLOB layout as
+models (`pack_transformer`/`unpack_transformer*` reuse `_split_blob`/`_skops_*`),
+but `TransformerMetadata` records the input `feature_names` (apply aligns by name)
+plus the fit-time `output_names` (mirror the inputs, or `component_1..k` for
+pca/svd) and `output_int` (kbins). The output schema is therefore fixed at bind
+from stored metadata, dodging edge #6 even though `transform()` width is
+data-derived.

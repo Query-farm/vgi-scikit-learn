@@ -28,6 +28,7 @@ from vgi_sklearn.feature_selection import FEATURE_SELECTION_FUNCTIONS
 from vgi_sklearn.grouped import GROUPED_FUNCTIONS
 from vgi_sklearn.metrics import METRIC_FUNCTIONS
 from vgi_sklearn.models import MODEL_FUNCTIONS
+from vgi_sklearn.stored_transforms import STORED_TRANSFORM_FUNCTIONS
 from vgi_sklearn.table_metrics import TABLE_METRIC_FUNCTIONS
 from vgi_sklearn.text import TEXT_FUNCTIONS
 from vgi_sklearn.transforms import TRANSFORM_FUNCTIONS
@@ -52,6 +53,7 @@ _FUNCTIONS: list[type] = [
     *METRIC_FUNCTIONS,
     *TABLE_METRIC_FUNCTIONS,
     *TRANSFORM_FUNCTIONS,
+    *STORED_TRANSFORM_FUNCTIONS,
     *TEXT_FUNCTIONS,
     *FEATURE_SELECTION_FUNCTIONS,
     *MODEL_FUNCTIONS,

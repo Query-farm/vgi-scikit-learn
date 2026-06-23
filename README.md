@@ -341,6 +341,30 @@ SELECT * FROM sklearn.simple_imputer((SELECT ...), id := 'id', strategy := 'medi
 Transforms compose — pipe one into the next as nested subqueries (scale, then
 cluster).
 
+These all refit on whatever you pass them. To **fit a transformer once and reuse
+it** — scale your training data and apply the *same* shift/scale to new data,
+without leakage — use `fit_transformer` / `apply_transform` (the transform
+analogue of `fit` / `predict`):
+
+```sql
+-- fit a scaler on training data and store it
+SELECT * FROM sklearn.fit_transformer(
+  (SELECT tenure, monthly_spend, support_tickets FROM churn_train),
+  transformer_name := 'churn_scaler', kind := 'standard_scaler');
+
+-- apply the stored scaler to new data (uses the training mean/variance)
+SELECT * FROM sklearn.apply_transform(
+  (SELECT customer_id, tenure, monthly_spend, support_tickets FROM churn_new),
+  transformer_name := 'churn_scaler', id := 'customer_id');
+```
+
+`kind` is any of `standard_scaler`, `minmax_scaler`, `robust_scaler`,
+`maxabs_scaler`, `normalizer`, `power_transformer`, `quantile_transformer`,
+`simple_imputer`, `binarizer`, `kbins_discretizer`, `pca`, `truncated_svd`
+(parameters via a JSON `params :=`). Like `fit`/`predict`, `fit_transformer` also
+returns a portable BLOB, and `apply_transform` accepts `transformer :=` instead
+of a registry name; `list_transformers` / `drop_transformer` manage the registry.
+
 ### Encode categorical (string) columns
 
 `fit`/`predict` already one-hot string features for you, but you can also
@@ -416,6 +440,9 @@ by-name features).
 - Text — `count_vectorizer`, `tfidf_vectorizer` (long format `(id, term, value)`)
 - Feature selection — `select_k_best`, `variance_threshold` (per-feature scores
   + a `selected` flag)
+
+**Stored transformers** (fit once, apply to new data — like `fit`/`predict`):
+`fit_transformer`, `apply_transform`, `list_transformers`, `drop_transformer`.
 - Decomposition / manifold — `pca`, `truncated_svd`, `tsne`, `isomap`,
   `spectral_embedding`, `mds`
 - Clustering — `kmeans`, `minibatch_kmeans`, `dbscan`, `optics`,

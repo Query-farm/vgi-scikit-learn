@@ -95,6 +95,30 @@ class ModelMetadata:
         return cls(**{k: v for k, v in d.items() if k in known})
 
 
+@dataclass(kw_only=True)
+class TransformerMetadata:
+    """Everything needed to apply a stored, already-fitted transformer to new data."""
+
+    name: str
+    kind: str  # e.g. "standard_scaler", "pca"
+    feature_names: list[str]  # input columns the transformer was fit on (aligned by name)
+    output_names: list[str]  # output column names (mirror features, or component_1..k)
+    output_int: bool = False  # True when the output is integer codes (kbins_discretizer)
+    params: dict[str, Any] = field(default_factory=dict)
+    n_features: int = 0
+    n_output: int = 0
+    sklearn_version: str = ""
+    created_at: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> TransformerMetadata:
+        known = {f for f in cls.__dataclass_fields__}  # noqa: C416
+        return cls(**{k: v for k, v in d.items() if k in known})
+
+
 class ModelStore:
     """Abstract model store. Implementations persist (estimator, metadata) by name."""
 
@@ -190,6 +214,94 @@ def set_store(store: ModelStore | None) -> None:
     _store = store
 
 
+class TransformerStore:
+    """Abstract store for fitted transformers (parallel to ``ModelStore``)."""
+
+    def save(self, transformer: Any, meta: TransformerMetadata) -> None:
+        raise NotImplementedError
+
+    def load(self, name: str) -> tuple[Any, TransformerMetadata]:
+        raise NotImplementedError
+
+    def load_meta(self, name: str) -> TransformerMetadata:
+        raise NotImplementedError
+
+    def list(self) -> list[TransformerMetadata]:
+        raise NotImplementedError
+
+    def delete(self, name: str) -> bool:
+        raise NotImplementedError
+
+
+class LocalTransformerStore(TransformerStore):
+    """Stores transformers as ``<root>/transformers/<name>.skops`` + ``.json``.
+
+    The ``transformers/`` subdirectory keeps them out of the model namespace, so
+    ``list_models`` and ``list_transformers`` never see each other's artifacts.
+    """
+
+    def __init__(self, root: str | os.PathLike[str]) -> None:
+        self.root = Path(root) / "transformers"
+
+    def _paths(self, name: str) -> tuple[Path, Path]:
+        validate_name(name)
+        return self.root / f"{name}.skops", self.root / f"{name}.json"
+
+    def save(self, transformer: Any, meta: TransformerMetadata) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        obj_path, meta_path = self._paths(meta.name)
+        obj_path.write_bytes(_skops_dumps(transformer))
+        meta_path.write_text(json.dumps(meta.to_dict(), indent=2, default=str))
+
+    def load(self, name: str) -> tuple[Any, TransformerMetadata]:
+        obj_path, _ = self._paths(name)
+        if not obj_path.exists():
+            raise ModelNotFoundError(name)
+        return _skops_loads(obj_path.read_bytes()), self.load_meta(name)
+
+    def load_meta(self, name: str) -> TransformerMetadata:
+        _, meta_path = self._paths(name)
+        if not meta_path.exists():
+            raise ModelNotFoundError(name)
+        return TransformerMetadata.from_dict(json.loads(meta_path.read_text()))
+
+    def list(self) -> list[TransformerMetadata]:
+        if not self.root.exists():
+            return []
+        out: list[TransformerMetadata] = []
+        for meta_path in sorted(self.root.glob("*.json")):
+            try:
+                out.append(TransformerMetadata.from_dict(json.loads(meta_path.read_text())))
+            except (json.JSONDecodeError, OSError):
+                continue
+        return out
+
+    def delete(self, name: str) -> bool:
+        obj_path, meta_path = self._paths(name)
+        existed = obj_path.exists() or meta_path.exists()
+        obj_path.unlink(missing_ok=True)
+        meta_path.unlink(missing_ok=True)
+        return existed
+
+
+_transformer_store: TransformerStore | None = None
+
+
+def get_transformer_store() -> TransformerStore:
+    """Return the process-wide transformer store (same root as the model store)."""
+    global _transformer_store
+    if _transformer_store is None:
+        root = os.environ.get("SKLEARN_MODELS_DIR", "models")
+        _transformer_store = LocalTransformerStore(root)
+    return _transformer_store
+
+
+def set_transformer_store(store: TransformerStore | None) -> None:
+    """Override the process-wide transformer store (used by tests)."""
+    global _transformer_store
+    _transformer_store = store
+
+
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -231,3 +343,23 @@ def unpack_model(blob: bytes) -> tuple[Any, ModelMetadata]:
     meta_bytes, est_bytes = _split_blob(blob)
     meta = ModelMetadata.from_dict(json.loads(meta_bytes))
     return _skops_loads(est_bytes), meta
+
+
+def pack_transformer(transformer: Any, meta: TransformerMetadata) -> bytes:
+    """Serialize ``(transformer, metadata)`` into one self-describing BLOB."""
+    obj_bytes = _skops_dumps(transformer)
+    meta_bytes = json.dumps(meta.to_dict(), default=str).encode("utf-8")
+    return struct.pack(">I", len(meta_bytes)) + meta_bytes + obj_bytes
+
+
+def unpack_transformer_meta(blob: bytes) -> TransformerMetadata:
+    """Read just the metadata from a transformer BLOB (cheap; no object load)."""
+    meta_bytes, _ = _split_blob(blob)
+    return TransformerMetadata.from_dict(json.loads(meta_bytes))
+
+
+def unpack_transformer(blob: bytes) -> tuple[Any, TransformerMetadata]:
+    """Read both transformer and metadata from a transformer BLOB (skops safe-load)."""
+    meta_bytes, obj_bytes = _split_blob(blob)
+    meta = TransformerMetadata.from_dict(json.loads(meta_bytes))
+    return _skops_loads(obj_bytes), meta
