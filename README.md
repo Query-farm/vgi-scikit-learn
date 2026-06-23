@@ -602,34 +602,6 @@ publishing a GitHub Release runs the full CI suite, then `uv build && uv publish
 (token in the `PYPI_API_TOKEN` repo secret). Bump `version` in `pyproject.toml`
 before tagging.
 
-## Deployment (Fly.io)
-
-```sh
-make vendor-sync   # copy vgi-python / vgi-rpc into vendor/ for the Docker build
-make deploy        # build, smoke-test, push, deploy
-fly volumes create sklearn_models --size 1 --region iad   # one-time, for the registry
-```
-
-## Layout
-
-```
-vgi_sklearn/
-  worker.py            assembles the `sklearn` catalog; main() / main_http() entry points
-  datasets.py          dataset table functions
-  metrics.py           metric aggregates
-  table_metrics.py     confusion_matrix / silhouette_score
-  transforms.py        unsupervised fit_transform (buffering)
-  models.py            generic fit / predict / cross_val_predict / registry mgmt
-  typed_models.py      generated fit_<estimator> functions (typed hyperparameters)
-  search.py            grid_search (discriminated-union hyperparameter search)
-  grouped.py           fit_model (aggregate) + predict_* scalars (per-group modeling)
-  registry.py          ModelStore (local disk; S3/R2 seam) + model-BLOB pack/unpack
-  buffering.py         shared sink/combine/matrix helpers
-  schema_utils.py      Arrow schema helpers
-sklearn_worker.py      dev/Fly stdio shim over vgi_sklearn.worker (for `uv run`)
-serve.py               dev/Fly HTTP shim over vgi_sklearn.worker
-```
-
 ## License
 
 MIT — see [LICENSE](LICENSE).
