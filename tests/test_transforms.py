@@ -186,3 +186,49 @@ class TestAddedScalers:
         assert all(isinstance(c, int) for c in codes)
         assert set(codes) <= {0, 1, 2, 3}
         assert [f.name for f in KBinsDiscretizerFn.output_fields(FEATS, SimpleNamespace())] == FEATS
+
+
+class TestTargetEncoder:
+    def _table(self) -> pa.Table:
+        return pa.table(
+            {
+                "id": list(range(12)),
+                "city": (["NYC", "LA", "SF"] * 4),
+                "y": [1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0, 1],
+            }
+        )
+
+    def test_binary_target_one_float_col_per_feature(self) -> None:
+        from vgi_sklearn.transforms import TargetEncoderFn
+
+        out = TargetEncoderFn.encode(self._table(), [], SimpleNamespace(id="id", target="y"))
+        assert set(out) == {"id", "city"}
+        assert len(out["city"]) == 12
+        assert all(isinstance(v, float) for v in out["city"])
+
+    def test_multiclass_target_rejected(self) -> None:
+        from vgi_sklearn.transforms import TargetEncoderFn
+
+        # enough rows per class that the internal CV runs and the width check fires
+        t = pa.table({"id": list(range(30)), "city": (["NYC", "LA", "SF"] * 10), "y": ([0, 1, 2] * 10)})
+        with pytest.raises(ValueError, match="binary or continuous"):
+            TargetEncoderFn.encode(t, [], SimpleNamespace(id="id", target="y"))
+
+
+class TestPolynomialFeatures:
+    def test_degree2_expands_and_names_are_sanitized(self) -> None:
+        from vgi_sklearn.transforms import PolynomialFeaturesFn
+
+        args = SimpleNamespace(degree=2, interaction_only=False, include_bias=False)
+        out = PolynomialFeaturesFn.transform(X[:, :2], ["a", "b"], args)
+        # a, b, a^2, a b, b^2 -> sanitized
+        assert set(out) == {"a", "b", "a_pow2", "a_x_b", "b_pow2"}
+        assert len(out["a_x_b"]) == len(X)
+
+    def test_output_fields_width_is_deterministic(self) -> None:
+        from vgi_sklearn.transforms import PolynomialFeaturesFn
+
+        args = SimpleNamespace(degree=2, interaction_only=True, include_bias=False)
+        fields = PolynomialFeaturesFn.output_fields(["a", "b", "c"], args)
+        # interaction_only degree 2: a, b, c, a b, a c, b c
+        assert [f.name for f in fields] == ["a", "b", "c", "a_x_b", "a_x_c", "b_x_c"]

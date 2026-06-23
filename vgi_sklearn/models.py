@@ -40,6 +40,7 @@ from sklearn.ensemble import (
     RandomForestClassifier,
     RandomForestRegressor,
 )
+from sklearn.inspection import partial_dependence as sk_partial_dependence
 from sklearn.inspection import permutation_importance as sk_permutation_importance
 from sklearn.linear_model import (
     BayesianRidge,
@@ -804,6 +805,127 @@ class PermutationImportance(SinkBuffer[PermImportanceArgs, DrainState]):
 
 
 # ===========================================================================
+# partial_dependence (how a model's prediction moves with one feature)
+# ===========================================================================
+
+
+@dataclass(slots=True, frozen=True)
+class PartialDependenceArgs:
+    data: Annotated[TableInput, Arg(0, doc="Background table (the model's feature columns).")]
+    model_name: Annotated[
+        str, Arg("model_name", default="", doc="Name of a model in the registry. Provide this OR model.")
+    ]
+    model: Annotated[bytes, Arg("model", default=b"", doc="A model BLOB. Provide this OR model_name.")]
+    feature: Annotated[str, Arg("feature", default="", doc="Numeric feature column to vary (required).")]
+    grid_resolution: Annotated[int, Arg("grid_resolution", default=100, doc="Number of grid points along the feature.")]
+
+
+_PD_SCHEMA = pa.schema(
+    [
+        sfield("feature_value", pa.float64(), "Value the feature was set to.", nullable=False),
+        sfield("class", pa.int64(), "Class label (NULL for regression / the single binary curve)."),
+        sfield("partial_dependence", pa.float64(), "Average model output at this feature value.", nullable=False),
+    ]
+)
+
+
+class PartialDependence(SinkBuffer[PartialDependenceArgs, DrainState]):
+    FunctionArguments: ClassVar[type] = PartialDependenceArgs
+
+    class Meta:
+        name = "partial_dependence"
+        description = "How a stored model's average prediction changes as one feature varies over a grid"
+        categories = ["models", "inspection"]
+        examples = [
+            FunctionExample(
+                sql=(
+                    "SELECT * FROM sklearn.partial_dependence((SELECT * FROM sklearn.iris()), "
+                    "model_name := 'iris_rf', feature := 'petal_length_cm') ORDER BY feature_value"
+                ),
+                description="Partial dependence of 'iris_rf' on petal length",
+            )
+        ]
+
+    @classmethod
+    def on_bind(cls, params: BindParams[PartialDependenceArgs]) -> BindResponse:
+        a = params.args
+        if not a.model_name and not a.model:
+            raise ValueError("partial_dependence requires either 'model_name' or 'model' (a model BLOB)")
+        if not a.feature:
+            raise ValueError("partial_dependence requires 'feature' (the column to vary)")
+        input_schema = params.bind_call.input_schema
+        assert input_schema is not None
+        meta = get_store().load_meta(a.model_name) if a.model_name else unpack_meta(a.model)
+        if a.feature not in meta.feature_names:
+            raise ValueError(
+                f"feature {a.feature!r} is not one of the model's features: {', '.join(meta.feature_names)}"
+            )
+        idx = meta.feature_names.index(a.feature)
+        if (meta.categorical or [False] * len(meta.feature_names))[idx]:
+            raise ValueError(f"partial_dependence supports numeric features only; {a.feature!r} is categorical")
+        missing = [f for f in meta.feature_names if f not in input_schema.names]
+        if missing:
+            raise ValueError(f"model requires feature column(s) {', '.join(missing)} not present in the input")
+        return BindResponse(output_schema=_PD_SCHEMA)
+
+    @classmethod
+    def initial_finalize_state(
+        cls, finalize_state_id: bytes, params: TableBufferingParams[PartialDependenceArgs]
+    ) -> DrainState:
+        return DrainState()
+
+    @classmethod
+    def finalize(
+        cls,
+        params: TableBufferingParams[PartialDependenceArgs],
+        finalize_state_id: bytes,
+        state: DrainState,
+        out: OutputCollector,
+    ) -> None:
+        if state.done:
+            out.finish()
+            return
+        state.done = True
+
+        a = params.args
+        input_schema = input_schema_of(params)
+        estimator, meta = get_store().load(a.model_name) if a.model_name else unpack_model(a.model)
+
+        table = cls.buffered_table(params, input_schema)
+        if table is None or table.num_rows == 0:
+            raise ValueError("partial_dependence received no rows")
+
+        cat_mask = meta.categorical or [False] * len(meta.feature_names)
+        x = build_x(rows_from_table(table, meta.feature_names), cat_mask)
+        idx = meta.feature_names.index(a.feature)
+        result = sk_partial_dependence(estimator, x, [idx], grid_resolution=a.grid_resolution, kind="average")
+        grid = result["grid_values"][0]
+        averages = np.asarray(result["average"])  # shape (n_outputs, n_grid)
+
+        # Label each output's curve: regression -> NULL; binary -> the positive
+        # class; multiclass -> one curve per class.
+        if meta.task == CLASSIFICATION and meta.classes:
+            labels = meta.classes if averages.shape[0] > 1 else [meta.classes[-1]]
+        else:
+            labels = [None] * averages.shape[0]
+
+        feature_value: list[float] = []
+        class_col: list[Any] = []
+        pd_col: list[float] = []
+        for o in range(averages.shape[0]):
+            for g in range(len(grid)):
+                feature_value.append(float(grid[g]))
+                class_col.append(None if labels[o] is None else int(labels[o]))
+                pd_col.append(float(averages[o, g]))
+        out.emit(
+            pa.RecordBatch.from_pydict(
+                {"feature_value": feature_value, "class": class_col, "partial_dependence": pd_col},
+                schema=params.output_schema,
+            )
+        )
+
+
+# ===========================================================================
 # Registry management: list_models / model_info / drop_model
 # ===========================================================================
 
@@ -942,6 +1064,7 @@ MODEL_FUNCTIONS: list[type] = [
     CrossValPredict,
     CrossValScore,
     PermutationImportance,
+    PartialDependence,
     ListModels,
     ModelInfo,
     DropModel,

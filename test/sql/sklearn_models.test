@@ -135,6 +135,25 @@ ORDER BY importance_mean DESC LIMIT 1;
 ----
 true
 
+# ---- partial_dependence: how the model's output moves with one feature ----
+
+# 3 classes x grid points, all partial-dependence values are probabilities in [0,1]
+query II
+SELECT count(DISTINCT class), bool_and(partial_dependence BETWEEN 0 AND 1)
+FROM sklearn.partial_dependence((SELECT * FROM iris_xy),
+     model_name := 'iris_rf', feature := 'petal_length_cm', grid_resolution := 20);
+----
+3	true
+
+# longer petals push P(virginica = class 2) up: PD is higher at the top of the grid
+query I
+SELECT last(partial_dependence ORDER BY feature_value) > first(partial_dependence ORDER BY feature_value)
+FROM sklearn.partial_dependence((SELECT * FROM iris_xy),
+     model_name := 'iris_rf', feature := 'petal_length_cm', grid_resolution := 20)
+WHERE class = 2;
+----
+true
+
 # ---- a regression model fits and is tagged regression ----
 
 query I

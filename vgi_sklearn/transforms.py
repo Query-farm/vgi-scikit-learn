@@ -1075,6 +1075,124 @@ class OneHotEncoderFn(_EncoderBase[_BaseArgs]):
         return cols
 
 
+@dataclass(slots=True, frozen=True)
+class TargetEncoderArgs(_BaseArgs):
+    target: Annotated[str, Arg("target", default="", doc="Target column to encode against (required).")]
+
+
+class TargetEncoderFn(_EncoderBase[TargetEncoderArgs]):
+    FunctionArguments: ClassVar[type] = TargetEncoderArgs
+
+    class Meta:
+        name = "target_encoder"
+        description = "Encode each categorical column by its (cross-fitted) mean target value"
+        categories = ["preprocessing", "encoding"]
+        examples = [
+            FunctionExample(
+                sql=(
+                    "SELECT * FROM sklearn.target_encoder("
+                    "(SELECT sample_id, target_name, target FROM sklearn.iris()), "
+                    "id := 'sample_id', target := 'target')"
+                ),
+                description="Encode the species name by its mean target",
+            )
+        ]
+
+    @staticmethod
+    def _feats(schema: pa.Schema, args: TargetEncoderArgs) -> list[str]:
+        return [n for n in schema.names if n not in {args.id, args.target} - {""}]
+
+    @classmethod
+    def output_schema(cls, input_schema: pa.Schema, feats: list[str], args: TargetEncoderArgs) -> pa.Schema:
+        fields: list[pa.Field] = []
+        if args.id:
+            fields.append(input_schema.field(args.id))
+        fields.extend(
+            sfield(f, pa.float64(), f"Target-mean encoding of {f}.", nullable=False)
+            for f in cls._feats(input_schema, args)
+        )
+        return pa.schema(fields)
+
+    @classmethod
+    def on_bind(cls, params: BindParams[TargetEncoderArgs]) -> BindResponse:
+        a = params.args
+        if not a.target:
+            raise ValueError("target_encoder requires 'target' (the column to encode against)")
+        ins = params.bind_call.input_schema
+        assert ins is not None
+        if a.target not in ins.names:
+            raise ValueError(f"target column {a.target!r} not found in input; columns: {', '.join(ins.names)}")
+        return BindResponse(output_schema=cls.output_schema(ins, [], a))
+
+    @classmethod
+    def encode(cls, table: pa.Table, feats: list[str], args: TargetEncoderArgs) -> dict[str, list[Any]]:
+        from sklearn.preprocessing import TargetEncoder
+
+        feats = cls._feats(table.schema, args)
+        x = _str_matrix(table, feats)
+        y = np.asarray(table.column(args.target).to_numpy(zero_copy_only=False))
+        encoded = TargetEncoder(target_type="auto").fit_transform(x, y)
+        if encoded.shape[1] != len(feats):
+            raise ValueError(
+                "target_encoder needs a binary or continuous target (multiclass would expand the width); "
+                "one-hot the target or encode one class at a time"
+            )
+        cols: dict[str, list[Any]] = {}
+        if args.id:
+            cols[args.id] = table.column(args.id).to_pylist()
+        for j, f in enumerate(feats):
+            cols[f] = [float(v) for v in encoded[:, j]]
+        return cols
+
+
+@dataclass(slots=True, frozen=True)
+class PolynomialFeaturesArgs(_BaseArgs):
+    degree: Annotated[int, Arg("degree", default=2, doc="Maximum degree of the polynomial features.")]
+    interaction_only: Annotated[bool, Arg("interaction_only", default=False, doc="Only products of distinct features.")]
+    include_bias: Annotated[
+        bool, Arg("include_bias", default=False, doc="Include the constant (all-ones) bias column.")
+    ]
+
+
+def _poly_names(feats: list[str], args: PolynomialFeaturesArgs) -> list[str]:
+    """The (sanitized) output column names — deterministic from n_features + degree."""
+    from sklearn.preprocessing import PolynomialFeatures
+
+    pf = PolynomialFeatures(
+        degree=args.degree, interaction_only=args.interaction_only, include_bias=args.include_bias
+    ).fit(np.zeros((1, len(feats))))
+    out = []
+    for name in pf.get_feature_names_out(feats):
+        out.append(str(name).replace("^", "_pow").replace(" ", "_x_") or "bias")
+    return out
+
+
+class PolynomialFeaturesFn(_BufferingTransform[PolynomialFeaturesArgs]):
+    FunctionArguments: ClassVar[type] = PolynomialFeaturesArgs
+
+    class Meta:
+        name = "polynomial_features"
+        description = "Expand features into polynomial and interaction terms (e.g. a, b -> a, b, a^2, a*b, b^2)"
+        categories = ["preprocessing", "feature-engineering"]
+        examples = _ex("polynomial_features", "degree => 2")
+
+    @staticmethod
+    def output_fields(feature_names: list[str], args: Any) -> list[pa.Field]:
+        return [
+            sfield(n, pa.float64(), f"Polynomial term {n}.", nullable=False) for n in _poly_names(feature_names, args)
+        ]
+
+    @classmethod
+    def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        from sklearn.preprocessing import PolynomialFeatures
+
+        expanded = PolynomialFeatures(
+            degree=args.degree, interaction_only=args.interaction_only, include_bias=args.include_bias
+        ).fit_transform(x)
+        names = _poly_names(feature_names, args)
+        return {names[j]: expanded[:, j].tolist() for j in range(len(names))}
+
+
 TRANSFORM_FUNCTIONS: list[type] = [
     StandardScalerFn,
     MinMaxScalerFn,
@@ -1107,4 +1225,6 @@ TRANSFORM_FUNCTIONS: list[type] = [
     MdsFn,
     OrdinalEncoderFn,
     OneHotEncoderFn,
+    TargetEncoderFn,
+    PolynomialFeaturesFn,
 ]

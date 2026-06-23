@@ -193,5 +193,33 @@ SELECT bool_and(coalesce(setosa, 0) + coalesce(versicolor, 0) + coalesce(virgini
 ----
 true
 
+# ---- target_encoder: encode a category by its mean target (one float col per feature) ----
+
+# binary target (is-setosa); 150 rows, the species name maps to 2 encoded values
+query II
+SELECT count(*), count(DISTINCT round(target_name, 6))
+FROM sklearn.target_encoder((SELECT sample_id, target_name, (target = 0)::INT AS y FROM sklearn.iris()),
+                            id => 'sample_id', target := 'y');
+----
+150	2
+
+# a multiclass target would expand the width -> rejected
+statement error
+SELECT * FROM sklearn.target_encoder((SELECT sample_id, target_name, target AS y FROM sklearn.iris()),
+                                     id => 'sample_id', target := 'y');
+----
+binary or continuous
+
+# ---- polynomial_features: degree-2 expansion with sanitized term names ----
+
+# 2 features at degree 2 -> a, b, a^2, a*b, b^2 (named a, b, a_pow2, a_x_b, b_pow2)
+query II
+SELECT count(*), bool_and(abs(sepal_length_cm_x_sepal_width_cm
+       - sepal_length_cm * sepal_width_cm) < 1e-9)
+FROM sklearn.polynomial_features(
+  (SELECT sample_id, sepal_length_cm, sepal_width_cm FROM sklearn.iris()), id => 'sample_id', degree => 2);
+----
+150	true
+
 statement ok
 DETACH sklearn;

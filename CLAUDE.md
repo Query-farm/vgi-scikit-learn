@@ -26,6 +26,7 @@ vgi_sklearn/
   stored_transforms.py fit_transformer / apply_transform (persisted, reusable transformers)
   models.py           fit / predict / cross_val_predict / cross_val_score / permutation_importance + registry mgmt
   pipeline.py         fit_pipeline — preprocessing steps + estimator as one stored model (predict unchanged)
+  splitters.py        kfold / stratified_kfold / group_kfold / timeseries_split — fold assignment for SQL-native CV
   typed_models.py     generated fit_<estimator> functions with typed hyperparams
   search.py           grid_search / randomized_search — discriminated-union (sparse) hyperparameter search
   grouped.py          per-group modeling: fit_model (aggregate) + predict_* (scalars)
@@ -191,6 +192,35 @@ arg, while `fit_<estimator>` exposes them as typed named args.
     bases. Build the args dataclass with `dataclasses.make_dataclass` using
     `Annotated[t, Arg(...)]` field types; set `FunctionArguments` in the
     namespace explicitly.
+12. **Don't name a SQL arg after a reserved keyword.** `group := 'x'` is a
+    parser error (GROUP is a keyword), so `group_kfold` exposes `group_col :=`
+    not `group :=`. Same trap as the aggregate `params` collision (the grouped
+    section above) but at the SQL-parse layer rather than the framework layer.
+
+## Pipelines, splitters & inspection (later additions)
+
+- **`fit_pipeline` (pipeline.py) reuses the model path entirely.** It builds a
+  sklearn `Pipeline([steps…, estimator])` from a JSON `steps` spec (kinds from
+  `stored_transforms._build`) and hands it to `models._fit_and_emit`, so the
+  stored artifact is a normal model BLOB — `predict` / `cross_val_predict` /
+  `permutation_importance` all work unchanged, and categoricals one-hot ahead of
+  the steps via the usual `wrap_estimator`. There is deliberately no
+  `apply_pipeline`.
+- **CV splitters (splitters.py) emit fold assignments, not splits of the data.**
+  `kfold`/`stratified_kfold`/`group_kfold` return one `(id, fold)` row per input
+  row (the row's *test* fold); `timeseries_split` returns `(split, id, role)`
+  long because expanding windows reuse rows across splits. Buffering; only the
+  id (+ label/group) column is read.
+- **`partial_dependence`/`permutation_importance` load a stored model** like
+  `predict` (by `model_name :=` or `model :=` BLOB), buffer the background table,
+  and emit long. PD is numeric-feature-only (categorical → clear error) and
+  labels each output curve: regression → NULL, binary → the positive class,
+  multiclass → one curve per class.
+- **`target_encoder` is binary/continuous-target only** — a multiclass target
+  makes sklearn's `TargetEncoder` output `n_features × n_classes` columns, which
+  breaks the fixed mirror schema, so it raises at finalize. `polynomial_features`
+  output width *is* fixed at bind (deterministic from n_features + degree); names
+  come from `get_feature_names_out` sanitized (`^`→`_pow`, ` `→`_x_`).
 
 ## Packaging & CI
 

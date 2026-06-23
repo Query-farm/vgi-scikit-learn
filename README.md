@@ -207,6 +207,18 @@ FROM sklearn.cross_val_score(
        estimator := 'gradient_boosting_classifier', target := 'churned', cv := 5);
 ```
 
+Want full control of the evaluation loop? The splitters assign each row a fold
+(`kfold`, `stratified_kfold`, `group_kfold`, `timeseries_split`), so you build
+the cross-validation in pure SQL — train on `fold <> f`, test on `fold = f`:
+
+```sql
+-- attach a stratified fold id to every row, then evaluate however you like
+WITH folds AS (
+  SELECT * FROM sklearn.stratified_kfold(
+    (SELECT customer_id, churned FROM churn), id := 'customer_id', label := 'churned', n_splits := 5))
+SELECT fold, count(*) FROM folds GROUP BY fold ORDER BY fold;
+```
+
 ### Which features matter? (permutation importance)
 
 `permutation_importance` shuffles each feature in turn and measures the drop in a
@@ -449,8 +461,12 @@ SELECT * FROM sklearn.make_blobs(n_samples := 300, centers := 4);   -- synthetic
 (escape hatch with JSON `params`), `fit_pipeline` (preprocessing steps +
 estimator as one model), `predict`, `cross_val_predict`,
 `cross_val_score` (per-fold held-out scores), `permutation_importance`
-(model-agnostic feature importance), `grid_search` / `randomized_search`
-(union-typed hyperparameter search), `list_models`, `model_info`, `drop_model`.
+(model-agnostic feature importance), `partial_dependence` (how a prediction moves
+with one feature), `grid_search` / `randomized_search` (union-typed hyperparameter
+search), `list_models`, `model_info`, `drop_model`.
+
+**Cross-validation splitters** (assign folds, then evaluate in pure SQL):
+`kfold`, `stratified_kfold`, `group_kfold`, `timeseries_split`.
 
 **Per-group models:** `fit_model` (aggregate — one model per `GROUP BY` group),
 `predict_one` / `predict_class_one` / `predict_proba_one` (scalars — per-row,
@@ -460,7 +476,8 @@ by-name features).
 - Scaling / preprocessing — `standard_scaler`, `minmax_scaler`, `robust_scaler`,
   `maxabs_scaler`, `normalizer`, `power_transformer`, `quantile_transformer`,
   `binarizer`, `kbins_discretizer`, `simple_imputer`
-- Encoding — `ordinal_encoder`, `one_hot_encoder`
+- Encoding — `ordinal_encoder`, `one_hot_encoder`, `target_encoder`
+- Feature engineering — `polynomial_features` (interaction / power terms)
 - Text — `count_vectorizer`, `tfidf_vectorizer` (long format `(id, term, value)`)
 - Feature selection — `select_k_best`, `variance_threshold` (per-feature scores
   + a `selected` flag)
