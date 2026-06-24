@@ -29,7 +29,10 @@ from vgi.table_buffering_function import OutputCollector, TableBufferingParams
 from vgi.table_function import BindParams
 
 from .buffering import DrainState, SinkBuffer, input_schema_of
+from .schema_utils import columns_md_rows
 from .schema_utils import field as sfield
+
+_VECTORIZER_ID_NOTE = "If an `id` column is named, it is carried through as the first column on each row."
 
 
 @dataclass(slots=True, frozen=True)
@@ -178,6 +181,15 @@ class CountVectorizerFn(_Vectorizer):
                 description="Term counts per document",
             )
         ]
+        tags = {
+            "vgi.columns_md": columns_md_rows(
+                [
+                    ("term", "VARCHAR", "Vocabulary term (or n-gram)."),
+                    ("value", "BIGINT", "Term count in the document."),
+                ],
+                note=_VECTORIZER_ID_NOTE,
+            )
+        }
 
     @classmethod
     def _make_vectorizer(cls, args: _VectorizerArgs) -> Any:
@@ -200,6 +212,15 @@ class TfidfVectorizerFn(_Vectorizer):
                 description="TF-IDF weights per document",
             )
         ]
+        tags = {
+            "vgi.columns_md": columns_md_rows(
+                [
+                    ("term", "VARCHAR", "Vocabulary term (or n-gram)."),
+                    ("value", "DOUBLE", "TF-IDF weight of the term in the document."),
+                ],
+                note=_VECTORIZER_ID_NOTE,
+            )
+        }
 
     @classmethod
     def _make_vectorizer(cls, args: _VectorizerArgs) -> Any:

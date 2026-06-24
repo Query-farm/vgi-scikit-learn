@@ -25,6 +25,7 @@ from vgi.table_buffering_function import OutputCollector, TableBufferingParams
 from vgi.table_function import BindParams
 
 from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
+from .schema_utils import columns_md
 from .schema_utils import field as sfield
 
 
@@ -51,6 +52,7 @@ class ConfusionMatrix(SinkBuffer[ConfusionMatrixArgs, DrainState]):
         name = "confusion_matrix"
         description = "Confusion matrix in long format: (actual, predicted, count)"
         categories = ["metrics", "classification"]
+        tags = {"vgi.columns_md": columns_md(_CONFUSION_SCHEMA)}
         examples = [
             FunctionExample(
                 sql=(
@@ -127,6 +129,7 @@ class SilhouetteScore(SinkBuffer[SilhouetteArgs, DrainState]):
         name = "silhouette_score"
         description = "Mean silhouette coefficient of a clustering (features + label column)"
         categories = ["metrics", "clustering"]
+        tags = {"vgi.columns_md": columns_md(_SILHOUETTE_SCHEMA)}
         examples = [
             FunctionExample(
                 sql="SELECT * FROM sklearn.silhouette_score((SELECT * FROM clustered), label => 'cluster', id => 'id')",
@@ -226,19 +229,23 @@ class _CurveFunction(SinkBuffer[_CurveArgs, DrainState]):
         out.emit(pa.RecordBatch.from_pydict(cls.curve(yt, ys), schema=params.output_schema))
 
 
+_ROC_SCHEMA = pa.schema(
+    [
+        sfield("threshold", pa.float64(), "Decision threshold for this point."),
+        sfield("fpr", pa.float64(), "False positive rate.", nullable=False),
+        sfield("tpr", pa.float64(), "True positive rate.", nullable=False),
+    ]
+)
+
+
 class RocCurve(_CurveFunction):
-    OUTPUT_SCHEMA: ClassVar[pa.Schema] = pa.schema(
-        [
-            sfield("threshold", pa.float64(), "Decision threshold for this point."),
-            sfield("fpr", pa.float64(), "False positive rate.", nullable=False),
-            sfield("tpr", pa.float64(), "True positive rate.", nullable=False),
-        ]
-    )
+    OUTPUT_SCHEMA: ClassVar[pa.Schema] = _ROC_SCHEMA
 
     class Meta:
         name = "roc_curve"
         description = "ROC curve points (threshold, fpr, tpr) for a binary classifier"
         categories = ["metrics", "classification", "ranking"]
+        tags = {"vgi.columns_md": columns_md(_ROC_SCHEMA)}
         examples = [
             FunctionExample(
                 sql=(
@@ -257,19 +264,23 @@ class RocCurve(_CurveFunction):
         return {"threshold": thr, "fpr": [float(v) for v in fpr], "tpr": [float(v) for v in tpr]}
 
 
+_PR_SCHEMA = pa.schema(
+    [
+        sfield("threshold", pa.float64(), "Decision threshold (NULL for the final point)."),
+        sfield("precision", pa.float64(), "Precision at this threshold.", nullable=False),
+        sfield("recall", pa.float64(), "Recall at this threshold.", nullable=False),
+    ]
+)
+
+
 class PrecisionRecallCurve(_CurveFunction):
-    OUTPUT_SCHEMA: ClassVar[pa.Schema] = pa.schema(
-        [
-            sfield("threshold", pa.float64(), "Decision threshold (NULL for the final point)."),
-            sfield("precision", pa.float64(), "Precision at this threshold.", nullable=False),
-            sfield("recall", pa.float64(), "Recall at this threshold.", nullable=False),
-        ]
-    )
+    OUTPUT_SCHEMA: ClassVar[pa.Schema] = _PR_SCHEMA
 
     class Meta:
         name = "precision_recall_curve"
         description = "Precision-recall curve points (threshold, precision, recall) for a binary classifier"
         categories = ["metrics", "classification", "ranking"]
+        tags = {"vgi.columns_md": columns_md(_PR_SCHEMA)}
         examples = [
             FunctionExample(
                 sql=(
@@ -300,20 +311,24 @@ class _CalibrationArgs:
     n_bins: Annotated[int, Arg("n_bins", default=10, doc="Number of bins to group predicted probabilities into.")]
 
 
+_CALIBRATION_SCHEMA = pa.schema(
+    [
+        sfield("prob_pred", pa.float64(), "Mean predicted probability in the bin.", nullable=False),
+        sfield("prob_true", pa.float64(), "Observed fraction of positives in the bin.", nullable=False),
+    ]
+)
+
+
 class CalibrationCurve(SinkBuffer[_CalibrationArgs, DrainState]):
     FunctionArguments: ClassVar[type] = _CalibrationArgs
 
-    OUTPUT_SCHEMA: ClassVar[pa.Schema] = pa.schema(
-        [
-            sfield("prob_pred", pa.float64(), "Mean predicted probability in the bin.", nullable=False),
-            sfield("prob_true", pa.float64(), "Observed fraction of positives in the bin.", nullable=False),
-        ]
-    )
+    OUTPUT_SCHEMA: ClassVar[pa.Schema] = _CALIBRATION_SCHEMA
 
     class Meta:
         name = "calibration_curve"
         description = "Reliability (calibration) curve: predicted vs. observed probability per bin"
         categories = ["metrics", "classification"]
+        tags = {"vgi.columns_md": columns_md(_CALIBRATION_SCHEMA)}
         examples = [
             FunctionExample(
                 sql=(

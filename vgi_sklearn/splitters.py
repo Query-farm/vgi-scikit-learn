@@ -27,7 +27,15 @@ from vgi.table_buffering_function import OutputCollector, TableBufferingParams
 from vgi.table_function import BindParams
 
 from .buffering import DrainState, SinkBuffer, input_schema_of
+from .schema_utils import columns_md_rows
 from .schema_utils import field as sfield
+
+_FOLD_MD = columns_md_rows(
+    [
+        ("<id>", "(input id type)", "The id column, carried through from the input."),
+        ("fold", "BIGINT", "Test fold this row belongs to."),
+    ]
+)
 
 
 def _require_id(input_schema: pa.Schema, id_col: str, fn: str) -> pa.Field:
@@ -111,6 +119,7 @@ class KFold(_FoldFunction[KFoldArgs]):
         name = "kfold"
         description = "Assign each row a K-fold test fold (id, fold)"
         categories = ["model-selection", "evaluation"]
+        tags = {"vgi.columns_md": _FOLD_MD}
         examples = [
             FunctionExample(
                 sql=(
@@ -147,6 +156,7 @@ class StratifiedKFold(_FoldFunction[StratifiedKFoldArgs]):
         name = "stratified_kfold"
         description = "K-fold that preserves each class's proportion per fold (id, fold)"
         categories = ["model-selection", "evaluation"]
+        tags = {"vgi.columns_md": _FOLD_MD}
         examples = [
             FunctionExample(
                 sql=(
@@ -198,6 +208,7 @@ class GroupKFold(_FoldFunction[GroupKFoldArgs]):
         name = "group_kfold"
         description = "K-fold that keeps all rows of a group in the same fold (id, fold)"
         categories = ["model-selection", "evaluation"]
+        tags = {"vgi.columns_md": _FOLD_MD}
         examples = [
             FunctionExample(
                 sql=(
@@ -242,6 +253,15 @@ class TimeSeriesSplit(SinkBuffer[TimeSeriesSplitArgs, DrainState]):
         name = "timeseries_split"
         description = "Expanding-window splits for ordered data: (split, id, role) in {train, test}"
         categories = ["model-selection", "evaluation"]
+        tags = {
+            "vgi.columns_md": columns_md_rows(
+                [
+                    ("split", "BIGINT", "Split index (0-based)."),
+                    ("<id>", "(input id type)", "The id column, carried through from the input."),
+                    ("role", "VARCHAR", "'train' or 'test' for this row in this split."),
+                ]
+            )
+        }
         examples = [
             FunctionExample(
                 sql=(

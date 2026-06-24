@@ -56,6 +56,7 @@ from .registry import (
     unpack_transformer_meta,
     validate_name,
 )
+from .schema_utils import columns_md, columns_md_rows
 from .schema_utils import field as sfield
 
 
@@ -171,6 +172,7 @@ class FitTransformer(SinkBuffer[FitTransformerArgs, DrainState]):
         name = "fit_transformer"
         description = "Fit a transformer (scaler/PCA/imputer/...) and return it as a BLOB; persist if named"
         categories = ["preprocessing", "registry"]
+        tags = {"vgi.columns_md": columns_md(_FIT_TRANSFORMER_SCHEMA)}
         examples = [
             FunctionExample(
                 sql=(
@@ -284,6 +286,16 @@ class ApplyTransform(TableInOutGenerator[ApplyTransformArgs]):
         name = "apply_transform"
         description = "Stream a table through a stored, already-fitted transformer"
         categories = ["preprocessing", "registry", "inference"]
+        tags = {
+            "vgi.columns_md": columns_md_rows(
+                [],
+                note=(
+                    "One column per transformer output (DOUBLE, or BIGINT for kbins_discretizer): the "
+                    "fit-time output names -- the input feature names when width is preserved, else "
+                    "`component_1..k`. If an `id` column is named, it is carried through as the first column."
+                ),
+            )
+        }
         examples = [
             FunctionExample(
                 sql=(
@@ -402,6 +414,7 @@ class ListTransformers(TableFunctionGenerator[_NoArgs]):
         name = "list_transformers"
         description = "List all stored transformers"
         categories = ["preprocessing", "registry"]
+        tags = {"vgi.columns_md": columns_md(_TRANSFORMER_INFO_SCHEMA)}
         examples = [
             FunctionExample(sql="SELECT * FROM sklearn.list_transformers()", description="List stored transformers")
         ]
@@ -440,6 +453,7 @@ class DropTransformer(TableFunctionGenerator[DropTransformerArgs]):
         name = "drop_transformer"
         description = "Delete a transformer from the registry"
         categories = ["preprocessing", "registry"]
+        tags = {"vgi.columns_md": columns_md(_DROP_TRANSFORMER_SCHEMA)}
         examples = [
             FunctionExample(
                 sql="SELECT * FROM sklearn.drop_transformer('sc')", description="Delete a stored transformer"

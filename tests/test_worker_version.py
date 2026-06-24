@@ -23,4 +23,6 @@ def test_catalog_info_advertises_release_version() -> None:
     """The CatalogInfo emitted on ATTACH carries the release version, not the sha."""
     info = worker.SklearnCatalog().catalogs()[0]
     assert info.implementation_version == vgi_sklearn.__version__
-    assert info.data_version_spec == vgi_sklearn.__version__
+    # data_version_spec is a SemVer range (packaging SpecifierSet), not a bare
+    # version — the worker serves exactly its current data version.
+    assert info.data_version_spec == f"=={vgi_sklearn.__version__}"

@@ -31,7 +31,34 @@ from vgi.table_function import BindParams
 
 from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
 from .features import rows_from_table
+from .schema_utils import columns_md_rows
 from .schema_utils import field as sfield
+
+_ID_NOTE = "If an `id` column is named, it is carried through unchanged as the first column."
+
+
+def _scaler_md(value_type: str, value_desc: str) -> str:
+    return columns_md_rows(
+        [],
+        note=(f"One {value_type} column per input feature (same name as the input), {value_desc} " + _ID_NOTE),
+    )
+
+
+_COMPONENTS_MD = columns_md_rows(
+    [("component_<i>", "DOUBLE", "Projection onto component i (one per kept component).")],
+    note=_ID_NOTE,
+)
+_CLUSTER_MD = columns_md_rows(
+    [("cluster", "INTEGER", "Assigned cluster label (-1 = noise for density methods).")],
+    note=_ID_NOTE,
+)
+_OUTLIER_MD = columns_md_rows(
+    [
+        ("anomaly_score", "DOUBLE", "Anomaly score; higher = more anomalous."),
+        ("is_outlier", "INTEGER", "1 if flagged as an outlier, else 0."),
+    ],
+    note=_ID_NOTE,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -135,6 +162,7 @@ class StandardScalerFn(_BufferingTransform[_BaseArgs]):
         description = "Standardize features to zero mean and unit variance"
         categories = ["preprocessing", "scaling"]
         examples = _ex("standard_scaler")
+        tags = {"vgi.columns_md": _scaler_md("DOUBLE", "the scaled value.")}
 
     output_fields = staticmethod(_scaler_fields)  # type: ignore[assignment]
 
@@ -154,6 +182,7 @@ class MinMaxScalerFn(_BufferingTransform[_BaseArgs]):
         description = "Scale features to the [0, 1] range"
         categories = ["preprocessing", "scaling"]
         examples = _ex("minmax_scaler")
+        tags = {"vgi.columns_md": _scaler_md("DOUBLE", "the scaled value.")}
 
     output_fields = staticmethod(_scaler_fields)  # type: ignore[assignment]
 
@@ -173,6 +202,7 @@ class RobustScalerFn(_BufferingTransform[_BaseArgs]):
         description = "Scale features using statistics robust to outliers (median/IQR)"
         categories = ["preprocessing", "scaling"]
         examples = _ex("robust_scaler")
+        tags = {"vgi.columns_md": _scaler_md("DOUBLE", "the scaled value.")}
 
     output_fields = staticmethod(_scaler_fields)  # type: ignore[assignment]
 
@@ -197,6 +227,7 @@ class NormalizerFn(_BufferingTransform[NormalizerArgs]):
         description = "Scale each sample (row) to unit norm"
         categories = ["preprocessing", "scaling"]
         examples = _ex("normalizer", "norm => 'l2'")
+        tags = {"vgi.columns_md": _scaler_md("DOUBLE", "the normalized value.")}
 
     output_fields = staticmethod(_scaler_fields)  # type: ignore[assignment]
 
@@ -221,6 +252,7 @@ class SimpleImputerFn(_BufferingTransform[ImputerArgs]):
         description = "Fill missing (NULL/NaN) feature values using a column statistic"
         categories = ["preprocessing", "imputation"]
         examples = _ex("simple_imputer", "strategy => 'median'")
+        tags = {"vgi.columns_md": _scaler_md("DOUBLE", "the imputed value.")}
 
     output_fields = staticmethod(_scaler_fields)  # type: ignore[assignment]
 
@@ -259,6 +291,7 @@ class PcaFn(_BufferingTransform[ComponentsArgs]):
         description = "Principal component analysis (linear dimensionality reduction)"
         categories = ["decomposition", "dimensionality-reduction"]
         examples = _ex("pca", "n_components => 2")
+        tags = {"vgi.columns_md": _COMPONENTS_MD}
 
     output_fields = staticmethod(_component_fields)  # type: ignore[assignment]
 
@@ -279,6 +312,7 @@ class TruncatedSvdFn(_BufferingTransform[ComponentsArgs]):
         description = "Truncated SVD (LSA) dimensionality reduction"
         categories = ["decomposition", "dimensionality-reduction"]
         examples = _ex("truncated_svd", "n_components => 2")
+        tags = {"vgi.columns_md": _COMPONENTS_MD}
 
     @staticmethod
     def _svd_k(n_components: int, n_features: int) -> int:
@@ -322,6 +356,7 @@ class KMeansFn(_BufferingTransform[KMeansArgs]):
         description = "K-Means clustering; emits a cluster label per row"
         categories = ["clustering"]
         examples = _ex("kmeans", "n_clusters => 3")
+        tags = {"vgi.columns_md": _CLUSTER_MD}
 
     output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
 
@@ -347,6 +382,7 @@ class DbscanFn(_BufferingTransform[DbscanArgs]):
         description = "DBSCAN density clustering; emits a cluster label per row (-1 = noise)"
         categories = ["clustering"]
         examples = _ex("dbscan", "eps => 0.5")
+        tags = {"vgi.columns_md": _CLUSTER_MD}
 
     output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
 
@@ -384,6 +420,7 @@ class IsolationForestFn(_BufferingTransform[IsolationForestArgs]):
         description = "Isolation Forest outlier detection; emits an anomaly score and flag per row"
         categories = ["outlier-detection"]
         examples = _ex("isolation_forest", "contamination => 0.1")
+        tags = {"vgi.columns_md": _OUTLIER_MD}
 
     output_fields = staticmethod(_outlier_fields)  # type: ignore[assignment]
 
@@ -413,6 +450,7 @@ class MaxAbsScalerFn(_BufferingTransform[_BaseArgs]):
         description = "Scale each feature by its maximum absolute value (to [-1, 1])"
         categories = ["preprocessing", "scaling"]
         examples = _ex("maxabs_scaler")
+        tags = {"vgi.columns_md": _scaler_md("DOUBLE", "the scaled value.")}
 
     output_fields = staticmethod(_scaler_fields)  # type: ignore[assignment]
 
@@ -437,6 +475,7 @@ class PowerTransformerFn(_BufferingTransform[PowerTransformerArgs]):
         description = "Make features more Gaussian via a power transform (Yeo-Johnson / Box-Cox)"
         categories = ["preprocessing", "scaling"]
         examples = _ex("power_transformer", "method => 'yeo-johnson'")
+        tags = {"vgi.columns_md": _scaler_md("DOUBLE", "the transformed value.")}
 
     output_fields = staticmethod(_scaler_fields)  # type: ignore[assignment]
 
@@ -462,6 +501,7 @@ class QuantileTransformerFn(_BufferingTransform[QuantileTransformerArgs]):
         description = "Map features to a uniform or normal distribution via quantiles (robust to outliers)"
         categories = ["preprocessing", "scaling"]
         examples = _ex("quantile_transformer", "output_distribution => 'normal'")
+        tags = {"vgi.columns_md": _scaler_md("DOUBLE", "the transformed value.")}
 
     output_fields = staticmethod(_scaler_fields)  # type: ignore[assignment]
 
@@ -487,6 +527,7 @@ class BinarizerFn(_BufferingTransform[BinarizerArgs]):
         description = "Threshold features to 0/1"
         categories = ["preprocessing"]
         examples = _ex("binarizer", "threshold => 0.0")
+        tags = {"vgi.columns_md": _scaler_md("DOUBLE", "the 0/1 thresholded value.")}
 
     output_fields = staticmethod(_scaler_fields)  # type: ignore[assignment]
 
@@ -516,6 +557,7 @@ class KBinsDiscretizerFn(_BufferingTransform[KBinsDiscretizerArgs]):
         description = "Discretize continuous features into integer bins (one bin index column per feature)"
         categories = ["preprocessing", "encoding"]
         examples = _ex("kbins_discretizer", "n_bins => 5")
+        tags = {"vgi.columns_md": _scaler_md("BIGINT", "the bin index.")}
 
     output_fields = staticmethod(_bin_fields)  # type: ignore[assignment]
 
@@ -546,6 +588,7 @@ class AgglomerativeFn(_BufferingTransform[AgglomerativeArgs]):
         description = "Hierarchical (agglomerative) clustering; emits a cluster label per row"
         categories = ["clustering"]
         examples = _ex("agglomerative_clustering", "n_clusters => 3")
+        tags = {"vgi.columns_md": _CLUSTER_MD}
 
     output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
 
@@ -571,6 +614,7 @@ class SpectralClusteringFn(_BufferingTransform[SpectralClusteringArgs]):
         description = "Spectral clustering on the affinity graph; emits a cluster label per row"
         categories = ["clustering"]
         examples = _ex("spectral_clustering", "n_clusters => 3")
+        tags = {"vgi.columns_md": _CLUSTER_MD}
 
     output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
 
@@ -595,6 +639,7 @@ class MeanShiftFn(_BufferingTransform[MeanShiftArgs]):
         description = "Mean-shift clustering (auto-discovers the number of clusters)"
         categories = ["clustering"]
         examples = _ex("mean_shift")
+        tags = {"vgi.columns_md": _CLUSTER_MD}
 
     output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
 
@@ -620,6 +665,7 @@ class BirchFn(_BufferingTransform[BirchArgs]):
         description = "BIRCH clustering (memory-efficient for large datasets)"
         categories = ["clustering"]
         examples = _ex("birch", "n_clusters => 3")
+        tags = {"vgi.columns_md": _CLUSTER_MD}
 
     output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
 
@@ -644,6 +690,7 @@ class OpticsFn(_BufferingTransform[OpticsArgs]):
         description = "OPTICS density clustering; emits a cluster label per row (-1 = noise)"
         categories = ["clustering"]
         examples = _ex("optics", "min_samples => 5")
+        tags = {"vgi.columns_md": _CLUSTER_MD}
 
     output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
 
@@ -663,6 +710,7 @@ class MiniBatchKMeansFn(_BufferingTransform[KMeansArgs]):
         description = "Mini-batch K-Means clustering (faster on large datasets)"
         categories = ["clustering"]
         examples = _ex("minibatch_kmeans", "n_clusters => 3")
+        tags = {"vgi.columns_md": _CLUSTER_MD}
 
     output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
 
@@ -689,6 +737,7 @@ class GaussianMixtureFn(_BufferingTransform[GaussianMixtureArgs]):
         description = "Gaussian mixture model clustering; emits the most likely component per row"
         categories = ["clustering"]
         examples = _ex("gaussian_mixture", "n_components => 3")
+        tags = {"vgi.columns_md": _CLUSTER_MD}
 
     output_fields = staticmethod(_cluster_fields)  # type: ignore[assignment]
 
@@ -721,6 +770,7 @@ class LocalOutlierFactorFn(_BufferingTransform[LofArgs]):
         description = "Local Outlier Factor; emits an anomaly score and flag per row"
         categories = ["outlier-detection"]
         examples = _ex("local_outlier_factor", "n_neighbors => 20")
+        tags = {"vgi.columns_md": _OUTLIER_MD}
 
     output_fields = staticmethod(_outlier_fields)  # type: ignore[assignment]
 
@@ -752,6 +802,7 @@ class OneClassSvmFn(_BufferingTransform[OneClassSvmArgs]):
         description = "One-Class SVM novelty/outlier detection; emits an anomaly score and flag per row"
         categories = ["outlier-detection"]
         examples = _ex("one_class_svm", "nu => 0.1")
+        tags = {"vgi.columns_md": _OUTLIER_MD}
 
     output_fields = staticmethod(_outlier_fields)  # type: ignore[assignment]
 
@@ -782,6 +833,7 @@ class EllipticEnvelopeFn(_BufferingTransform[EllipticEnvelopeArgs]):
         description = "Elliptic Envelope (Gaussian) outlier detection; emits an anomaly score and flag per row"
         categories = ["outlier-detection"]
         examples = _ex("elliptic_envelope", "contamination => 0.1")
+        tags = {"vgi.columns_md": _OUTLIER_MD}
 
     output_fields = staticmethod(_outlier_fields)  # type: ignore[assignment]
 
@@ -817,6 +869,7 @@ class TsneFn(_BufferingTransform[TsneArgs]):
         description = "t-SNE non-linear embedding (great for 2-D visualization)"
         categories = ["manifold", "dimensionality-reduction"]
         examples = _ex("tsne", "n_components => 2")
+        tags = {"vgi.columns_md": _COMPONENTS_MD}
 
     output_fields = staticmethod(_component_fields)  # type: ignore[assignment]
 
@@ -842,6 +895,7 @@ class IsomapFn(_BufferingTransform[IsomapArgs]):
         description = "Isomap non-linear embedding (geodesic distance preservation)"
         categories = ["manifold", "dimensionality-reduction"]
         examples = _ex("isomap", "n_components => 2")
+        tags = {"vgi.columns_md": _COMPONENTS_MD}
 
     output_fields = staticmethod(_component_fields)  # type: ignore[assignment]
 
@@ -867,6 +921,7 @@ class SpectralEmbeddingFn(_BufferingTransform[SpectralEmbeddingArgs]):
         description = "Spectral (Laplacian eigenmaps) non-linear embedding"
         categories = ["manifold", "dimensionality-reduction"]
         examples = _ex("spectral_embedding", "n_components => 2")
+        tags = {"vgi.columns_md": _COMPONENTS_MD}
 
     output_fields = staticmethod(_component_fields)  # type: ignore[assignment]
 
@@ -892,6 +947,7 @@ class MdsFn(_BufferingTransform[MdsArgs]):
         description = "Multidimensional scaling embedding (distance preservation)"
         categories = ["manifold", "dimensionality-reduction"]
         examples = _ex("mds", "n_components => 2")
+        tags = {"vgi.columns_md": _COMPONENTS_MD}
 
     output_fields = staticmethod(_component_fields)  # type: ignore[assignment]
 
@@ -986,6 +1042,7 @@ class OrdinalEncoderFn(_EncoderBase[_BaseArgs]):
                 description="Encode the iris species name as an integer code",
             )
         ]
+        tags = {"vgi.columns_md": _scaler_md("BIGINT", "the integer code (-1 = missing/unseen).")}
 
     @classmethod
     def output_schema(cls, input_schema: pa.Schema, feats: list[str], args: Any) -> pa.Schema:
@@ -1027,6 +1084,16 @@ class OneHotEncoderFn(_EncoderBase[_BaseArgs]):
                 description="One-hot encode the iris species name (one row per active category)",
             )
         ]
+        tags = {
+            "vgi.columns_md": columns_md_rows(
+                [
+                    ("feature", "VARCHAR", "Source feature column."),
+                    ("category", "VARCHAR", "Category value that is set for this row."),
+                    ("value", "DOUBLE", "Indicator value (always 1.0 for an active cell)."),
+                ],
+                note=_ID_NOTE,
+            )
+        }
 
     @classmethod
     def output_schema(cls, input_schema: pa.Schema, feats: list[str], args: Any) -> pa.Schema:
@@ -1097,6 +1164,7 @@ class TargetEncoderFn(_EncoderBase[TargetEncoderArgs]):
                 description="Encode the species name by its mean target",
             )
         ]
+        tags = {"vgi.columns_md": _scaler_md("DOUBLE", "the target-mean encoding.")}
 
     @staticmethod
     def _feats(schema: pa.Schema, args: TargetEncoderArgs) -> list[str]:
@@ -1175,6 +1243,15 @@ class PolynomialFeaturesFn(_BufferingTransform[PolynomialFeaturesArgs]):
         description = "Expand features into polynomial and interaction terms (e.g. a, b -> a, b, a^2, a*b, b^2)"
         categories = ["preprocessing", "feature-engineering"]
         examples = _ex("polynomial_features", "degree => 2")
+        tags = {
+            "vgi.columns_md": columns_md_rows(
+                [],
+                note=(
+                    "One DOUBLE column per generated polynomial/interaction term; names are derived "
+                    "from the input features (e.g. `a`, `b`, `a_pow2`, `a_x_b`). " + _ID_NOTE
+                ),
+            )
+        }
 
     @staticmethod
     def output_fields(feature_names: list[str], args: Any) -> list[pa.Field]:

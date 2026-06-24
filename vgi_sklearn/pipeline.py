@@ -34,6 +34,7 @@ from vgi.table_function import BindParams
 from .buffering import DrainState, SinkBuffer, input_schema_of
 from .models import _ESTIMATORS, _FIT_SCHEMA, _fit_and_emit, _parse_params, build_estimator
 from .registry import validate_name
+from .schema_utils import columns_md
 from .stored_transforms import TRANSFORMER_KINDS, _build
 
 
@@ -80,6 +81,7 @@ class FitPipeline(SinkBuffer[FitPipelineArgs, DrainState]):
         name = "fit_pipeline"
         description = "Fit preprocessing steps + an estimator as one model; predict with the usual 'predict'"
         categories = ["models", "supervised", "pipeline"]
+        tags = {"vgi.columns_md": columns_md(_FIT_SCHEMA)}
         examples = [
             FunctionExample(
                 sql=(

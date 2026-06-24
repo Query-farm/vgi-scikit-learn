@@ -45,6 +45,10 @@ log = logging.getLogger(__name__)
 # track __version__, which is the single source bumped per release.
 IMPLEMENTATION_VERSION = __version__
 DATA_VERSION = __version__
+# data_version_spec is advertised as a SemVer *range* (a packaging SpecifierSet),
+# not a bare version. The worker regenerates its data each release, so it serves
+# exactly the current data version — an exact-match range.
+DATA_VERSION_SPEC = f"=={DATA_VERSION}"
 # Build provenance only (Sentry release / diagnostics) — NOT the advertised
 # implementation version, which must stay a semver.
 GIT_COMMIT = os.environ.get("VGI_SKLEARN_GIT_COMMIT") or "unknown"
@@ -66,13 +70,75 @@ _FUNCTIONS: list[type] = [
     *SEARCH_FUNCTIONS,
 ]
 
+# Provenance / about link advertised on the catalog (VGI source_url).
+SOURCE_URL = "https://github.com/query-farm/vgi-scikit-learn"
+
+# Catalog-level metadata surfaced through duckdb_databases() (comment + tags).
+# The description_llm/_md tags feed agent/doc consumers; author/copyright/license
+# advertise provenance.
+_CATALOG_COMMENT = "scikit-learn datasets, metrics, transforms, and a train/predict model registry for DuckDB/SQL"
+# Catalog-level description: the high-level "what this worker is".
+_CATALOG_DESCRIPTION_LLM = (
+    "scikit-learn for SQL. Load toy and generated datasets; compute regression, "
+    "classification, and clustering metrics as aggregates; fit and persist "
+    "transformers and models (fit returns a model BLOB, predict aligns features "
+    "by name and auto-encodes string labels); run cross-validation, grid and "
+    "randomized hyperparameter search, pipelines, and per-group modeling — all as "
+    "DuckDB table, aggregate, and scalar functions."
+)
+_CATALOG_DESCRIPTION_MD = (
+    "# scikit-learn for SQL\n\n"
+    "Exposes [scikit-learn](https://scikit-learn.org) to DuckDB/SQL as VGI functions:\n\n"
+    "- **Datasets** — toy datasets and generators (`iris`, `make_classification`, ...)\n"
+    "- **Metrics** — regression/classification/clustering scores as aggregates\n"
+    "- **Transforms** — scalers, encoders, decomposition (fit-transform + stored)\n"
+    "- **Models** — `fit`/`predict`, typed `fit_<estimator>`, cross-validation, "
+    "grid/randomized search, pipelines, and per-group modeling\n\n"
+    "Models and transformers are stored as reusable BLOBs in a registry."
+)
+# Schema-level description: an index of what is callable in the `main` namespace.
+_SCHEMA_DESCRIPTION_LLM = (
+    "Functions in sklearn.main, by family: datasets (table functions); metrics "
+    "(aggregates over actual/predicted); transforms and stored transformers; text "
+    "vectorizers; feature selection; models (fit → model BLOB → predict, typed "
+    "fit_<estimator>, pipelines); cross-validation splitters and scorers; "
+    "hyperparameter search; and per-group modeling scalars/aggregates."
+)
+_SCHEMA_DESCRIPTION_MD = (
+    "# `main` schema\n\n"
+    "Every scikit-learn function lives here, grouped by family:\n\n"
+    "- **datasets** — toy/generated data as table functions\n"
+    "- **metrics** — regression/classification/clustering aggregates\n"
+    "- **transforms** — scalers, encoders, decomposition (+ stored, reusable)\n"
+    "- **text / feature_selection** — vectorizers, score-and-select\n"
+    "- **models** — `fit`/`predict`, typed `fit_<estimator>`, pipelines, CV, search\n"
+    "- **grouped** — per-group `fit_model` + `predict_*` scalars"
+)
+_CATALOG_TAGS = {
+    "vgi.description_llm": _CATALOG_DESCRIPTION_LLM,
+    "vgi.description_md": _CATALOG_DESCRIPTION_MD,
+    "vgi.author": "Query Farm <hello@query.farm>",
+    "vgi.copyright": "Copyright 2026 Query Farm LLC - https://query.farm",
+    "vgi.license": "MIT",
+    "vgi.support_contact": f"{SOURCE_URL}/issues",
+    "vgi.support_policy_url": f"{SOURCE_URL}/blob/main/SUPPORT.md",
+}
+
 _SKLEARN_CATALOG = Catalog(
     name="sklearn",
     default_schema="main",
+    comment=_CATALOG_COMMENT,
+    tags=_CATALOG_TAGS,
     schemas=[
         Schema(
             name="main",
             comment="scikit-learn datasets, metrics, transforms, and models for SQL",
+            tags={
+                "provider": "scikit-learn",
+                "domain": "machine-learning",
+                "vgi.description_llm": _SCHEMA_DESCRIPTION_LLM,
+                "vgi.description_md": _SCHEMA_DESCRIPTION_MD,
+            },
             functions=list(_FUNCTIONS),
         ),
     ],
@@ -90,7 +156,8 @@ class SklearnCatalog(ReadOnlyCatalogInterface):
             CatalogInfo(
                 name=self._effective_catalog_name,
                 implementation_version=IMPLEMENTATION_VERSION,
-                data_version_spec=DATA_VERSION,
+                data_version_spec=DATA_VERSION_SPEC,
+                source_url=SOURCE_URL,
                 attach_option_specs=[spec.serialize() for spec in self.attach_option_specs],
             )
         ]

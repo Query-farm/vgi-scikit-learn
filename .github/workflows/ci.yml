@@ -106,3 +106,20 @@ jobs:
 
       - name: Run extension integration suite
         run: ci/run-integration.sh
+
+  # Lint the worker's catalog metadata (descriptions, tags, examples, column
+  # docs) with vgi-lint-check. Metadata quality is platform-independent, so
+  # Linux-only. fail-on: warning — warnings/errors fail CI; advisory info does not.
+  lint-metadata:
+    name: vgi-lint-check (metadata quality)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - name: Install the worker (from the lockfile)
+        run: uv sync --frozen --python 3.13
+      - name: Lint worker metadata
+        uses: Query-farm/vgi-lint-check@v1
+        with:
+          location: .venv/bin/vgi-sklearn
+          fail-on: warning

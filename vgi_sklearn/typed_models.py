@@ -32,6 +32,9 @@ from vgi.table_function import BindParams
 from .buffering import DrainState, SinkBuffer, input_schema_of
 from .models import _ESTIMATORS, _FIT_SCHEMA, _fit_and_emit
 from .registry import validate_name
+from .schema_utils import columns_md
+
+_FIT_COLUMNS_MD = columns_md(_FIT_SCHEMA)
 
 _UNSET: Any = object()
 
@@ -358,6 +361,7 @@ def _make_fit_function(est_name: str) -> type:
                     description=f"Train a {est_name} with named hyperparameters",
                 )
             ],
+            "tags": {"vgi.columns_md": _FIT_COLUMNS_MD},
         },
     )
     namespace = {

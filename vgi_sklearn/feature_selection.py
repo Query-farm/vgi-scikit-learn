@@ -28,6 +28,7 @@ from vgi.table_buffering_function import OutputCollector, TableBufferingParams
 from vgi.table_function import BindParams
 
 from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
+from .schema_utils import columns_md
 from .schema_utils import field as sfield
 
 
@@ -101,6 +102,7 @@ class SelectKBest(SinkBuffer[SelectKBestArgs, DrainState]):
         name = "select_k_best"
         description = "Univariate feature scores vs. the target, flagging the top k"
         categories = ["preprocessing", "feature-selection"]
+        tags = {"vgi.columns_md": columns_md(_SELECT_SCHEMA)}
         examples = [
             FunctionExample(
                 sql=(
@@ -204,6 +206,7 @@ class VarianceThreshold(SinkBuffer[VarianceThresholdArgs, DrainState]):
         name = "variance_threshold"
         description = "Per-feature variance, flagging features above a threshold (unsupervised filter)"
         categories = ["preprocessing", "feature-selection"]
+        tags = {"vgi.columns_md": columns_md(_VARIANCE_SCHEMA)}
         examples = [
             FunctionExample(
                 sql=(
