@@ -132,6 +132,8 @@ class FitModel(AggregateFunction[FitState]):
     """Fit one estimator per ``GROUP BY`` group; emit the model + diagnostics."""
 
     class Meta:
+        """VGI metadata for the fit_model aggregate."""
+
         name = "fit_model"
         description = "Fit one model per group (aggregate); returns the model BLOB + diagnostics"
         categories = ["models", "supervised", "grouped"]
@@ -149,6 +151,7 @@ class FitModel(AggregateFunction[FitState]):
 
     @classmethod
     def initial_state(cls, params: ProcessParams[None]) -> FitState:
+        """Start each group with an empty accumulation state."""
         return FitState()
 
     @classmethod
@@ -161,6 +164,7 @@ class FitModel(AggregateFunction[FitState]):
         estimator: Annotated[str, ConstParam(doc="Estimator name, e.g. 'random_forest_classifier'")],
         hyperparams: Annotated[str, ConstParam(doc="JSON hyperparameters; '{}' for defaults")],
     ) -> None:
+        """Buffer this batch's rows into each touched group's state."""
         names, rows, cat_mask = _struct_rows(features)
         target_numeric = pa.types.is_floating(target.type) or pa.types.is_integer(target.type)
         tvals = target.to_pylist()
@@ -186,6 +190,7 @@ class FitModel(AggregateFunction[FitState]):
 
     @classmethod
     def combine(cls, source: FitState, target: FitState, params: ProcessParams[None]) -> FitState:
+        """Merge two partial states for the same group (concatenate chunks)."""
         return FitState(
             chunks=source.chunks + target.chunks,
             feature_names=source.feature_names or target.feature_names,
@@ -202,6 +207,7 @@ class FitModel(AggregateFunction[FitState]):
         states: dict[int, FitState],
         params: ProcessParams[None],
     ) -> Annotated[pa.RecordBatch, Returns(_FIT_RESULT)]:
+        """Fit each group's model and emit one result struct per group."""
         results: list[dict[str, Any] | None] = []
         for gid in group_ids:
             s = states.get(gid.as_py())
@@ -298,6 +304,8 @@ class PredictOne(ScalarFunction):
     """Predict one numeric value per row (regression, or numeric class labels)."""
 
     class Meta:
+        """VGI metadata for the predict_one scalar."""
+
         name = "predict_one"
         description = "Score a row through a model BLOB; returns a numeric prediction"
         categories = ["models", "inference", "grouped"]
@@ -317,6 +325,7 @@ class PredictOne(ScalarFunction):
         model: Annotated[pa.BinaryArray, Param(doc="A model BLOB (from fit_model / fit)")],
         features: Annotated[pa.Array, Param(doc="Feature STRUCT")],
     ) -> Annotated[pa.DoubleArray, Returns(pa.float64())]:
+        """Score each row through its model BLOB and return numeric predictions."""
         vals = _predict_values(model, features)
         return pa.array([None if v is None else float(v) for v in vals], type=pa.float64())
 
@@ -325,6 +334,8 @@ class PredictClassOne(ScalarFunction):
     """Predict the class label per row as text (supports string labels)."""
 
     class Meta:
+        """VGI metadata for the predict_class_one scalar."""
+
         name = "predict_class_one"
         description = "Score a row through a classifier BLOB; returns the class label as text"
         categories = ["models", "inference", "grouped"]
@@ -344,6 +355,7 @@ class PredictClassOne(ScalarFunction):
         model: Annotated[pa.BinaryArray, Param(doc="A classifier model BLOB")],
         features: Annotated[pa.Array, Param(doc="Feature STRUCT")],
     ) -> Annotated[pa.StringArray, Returns(pa.string())]:
+        """Score each row through its classifier BLOB and return text class labels."""
         vals = _predict_values(model, features)
         return pa.array([None if v is None else str(v) for v in vals], type=pa.string())
 
@@ -352,6 +364,8 @@ class PredictProbaOne(ScalarFunction):
     """Predict per-class probabilities per row, in the model's class order."""
 
     class Meta:
+        """VGI metadata for the predict_proba_one scalar."""
+
         name = "predict_proba_one"
         description = "Class probabilities for a row through a classifier BLOB (DOUBLE[])"
         categories = ["models", "inference", "grouped"]
@@ -371,6 +385,7 @@ class PredictProbaOne(ScalarFunction):
         model: Annotated[pa.BinaryArray, Param(doc="A classifier model BLOB")],
         features: Annotated[pa.Array, Param(doc="Feature STRUCT")],
     ) -> Annotated[pa.ListArray, Returns(pa.list_(pa.float64()))]:
+        """Return per-class probabilities for each row from its classifier BLOB."""
         vals = _predict_values(model, features, proba=True)
         return pa.array(
             [None if v is None else [float(p) for p in v] for v in vals],

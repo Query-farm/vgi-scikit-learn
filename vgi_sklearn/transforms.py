@@ -26,8 +26,9 @@ import pyarrow as pa
 from vgi.arguments import Arg, TableInput
 from vgi.invocation import BindResponse
 from vgi.metadata import FunctionExample
-from vgi.table_buffering_function import OutputCollector, TableBufferingParams
+from vgi.table_buffering_function import TableBufferingParams
 from vgi.table_function import BindParams
+from vgi_rpc.rpc import OutputCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
 from .features import rows_from_table
@@ -67,7 +68,7 @@ class _BaseArgs:
     id: Annotated[str, Arg("id", default="", doc="Optional column to carry through unchanged to the output")]
 
 
-class _BufferingTransform[TArgs](SinkBuffer[TArgs, DrainState]):
+class _BufferingTransform[TArgs: _BaseArgs](SinkBuffer[TArgs, DrainState]):
     """Buffer the whole input, fit_transform once in finalize, stream out.
 
     Subclasses set ``FunctionArguments`` and implement ``output_fields`` (the
@@ -123,7 +124,7 @@ class _BufferingTransform[TArgs](SinkBuffer[TArgs, DrainState]):
 
         table = cls.buffered_table(params, input_schema)
         if table is None:
-            empty = {name: [] for name in params.output_schema.names}
+            empty: dict[str, list[Any]] = {name: [] for name in params.output_schema.names}
             out.emit(pa.RecordBatch.from_pydict(empty, schema=params.output_schema))
             return
 
@@ -155,9 +156,13 @@ def _scaler_fields(feature_names: list[str], _args: Any) -> list[pa.Field]:
 
 
 class StandardScalerFn(_BufferingTransform[_BaseArgs]):
+    """Standardize features to zero mean and unit variance."""
+
     FunctionArguments: ClassVar[type] = _BaseArgs
 
     class Meta:
+        """VGI metadata for the standard_scaler function."""
+
         name = "standard_scaler"
         description = "Standardize features to zero mean and unit variance"
         categories = ["preprocessing", "scaling"]
@@ -168,6 +173,7 @@ class StandardScalerFn(_BufferingTransform[_BaseArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.preprocessing import StandardScaler
 
         z = StandardScaler().fit_transform(x)
@@ -175,9 +181,13 @@ class StandardScalerFn(_BufferingTransform[_BaseArgs]):
 
 
 class MinMaxScalerFn(_BufferingTransform[_BaseArgs]):
+    """Scale features to the [0, 1] range."""
+
     FunctionArguments: ClassVar[type] = _BaseArgs
 
     class Meta:
+        """VGI metadata for the minmax_scaler function."""
+
         name = "minmax_scaler"
         description = "Scale features to the [0, 1] range"
         categories = ["preprocessing", "scaling"]
@@ -188,6 +198,7 @@ class MinMaxScalerFn(_BufferingTransform[_BaseArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.preprocessing import MinMaxScaler
 
         z = MinMaxScaler().fit_transform(x)
@@ -195,9 +206,13 @@ class MinMaxScalerFn(_BufferingTransform[_BaseArgs]):
 
 
 class RobustScalerFn(_BufferingTransform[_BaseArgs]):
+    """Scale features using statistics robust to outliers (median/IQR)."""
+
     FunctionArguments: ClassVar[type] = _BaseArgs
 
     class Meta:
+        """VGI metadata for the robust_scaler function."""
+
         name = "robust_scaler"
         description = "Scale features using statistics robust to outliers (median/IQR)"
         categories = ["preprocessing", "scaling"]
@@ -208,6 +223,7 @@ class RobustScalerFn(_BufferingTransform[_BaseArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.preprocessing import RobustScaler
 
         z = RobustScaler().fit_transform(x)
@@ -216,13 +232,19 @@ class RobustScalerFn(_BufferingTransform[_BaseArgs]):
 
 @dataclass(slots=True, frozen=True)
 class NormalizerArgs(_BaseArgs):
+    """Arguments for the normalizer function."""
+
     norm: Annotated[str, Arg("norm", default="l2", doc="Norm to use: 'l1', 'l2', or 'max'.")]
 
 
 class NormalizerFn(_BufferingTransform[NormalizerArgs]):
+    """Scale each sample (row) to unit norm."""
+
     FunctionArguments: ClassVar[type] = NormalizerArgs
 
     class Meta:
+        """VGI metadata for the normalizer function."""
+
         name = "normalizer"
         description = "Scale each sample (row) to unit norm"
         categories = ["preprocessing", "scaling"]
@@ -233,6 +255,7 @@ class NormalizerFn(_BufferingTransform[NormalizerArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.preprocessing import Normalizer
 
         z = Normalizer(norm=args.norm).fit_transform(x)
@@ -241,13 +264,19 @@ class NormalizerFn(_BufferingTransform[NormalizerArgs]):
 
 @dataclass(slots=True, frozen=True)
 class ImputerArgs(_BaseArgs):
+    """Arguments for the imputer function."""
+
     strategy: Annotated[str, Arg("strategy", default="mean", doc="mean, median, most_frequent, or constant.")]
 
 
 class SimpleImputerFn(_BufferingTransform[ImputerArgs]):
+    """Fill missing (NULL/NaN) feature values using a column statistic."""
+
     FunctionArguments: ClassVar[type] = ImputerArgs
 
     class Meta:
+        """VGI metadata for the simple_imputer function."""
+
         name = "simple_imputer"
         description = "Fill missing (NULL/NaN) feature values using a column statistic"
         categories = ["preprocessing", "imputation"]
@@ -258,6 +287,7 @@ class SimpleImputerFn(_BufferingTransform[ImputerArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.impute import SimpleImputer
 
         z = SimpleImputer(strategy=args.strategy).fit_transform(x)
@@ -271,6 +301,8 @@ class SimpleImputerFn(_BufferingTransform[ImputerArgs]):
 
 @dataclass(slots=True, frozen=True)
 class ComponentsArgs(_BaseArgs):
+    """Arguments for the components function."""
+
     n_components: Annotated[int, Arg("n_components", default=2, doc="Number of components to keep.")]
 
 
@@ -284,19 +316,24 @@ def _component_fields(feature_names: list[str], args: Any) -> list[pa.Field]:
 
 
 class PcaFn(_BufferingTransform[ComponentsArgs]):
+    """Principal component analysis (linear dimensionality reduction)."""
+
     FunctionArguments: ClassVar[type] = ComponentsArgs
 
     class Meta:
+        """VGI metadata for the pca function."""
+
         name = "pca"
         description = "Principal component analysis (linear dimensionality reduction)"
         categories = ["decomposition", "dimensionality-reduction"]
         examples = _ex("pca", "n_components => 2")
         tags = {"vgi.columns_md": _COMPONENTS_MD}
 
-    output_fields = staticmethod(_component_fields)  # type: ignore[assignment]
+    output_fields = staticmethod(_component_fields)
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.decomposition import PCA
 
         k = _effective_components(args.n_components, len(feature_names))
@@ -305,9 +342,13 @@ class PcaFn(_BufferingTransform[ComponentsArgs]):
 
 
 class TruncatedSvdFn(_BufferingTransform[ComponentsArgs]):
+    """Truncated SVD (LSA) dimensionality reduction."""
+
     FunctionArguments: ClassVar[type] = ComponentsArgs
 
     class Meta:
+        """VGI metadata for the truncated_svd function."""
+
         name = "truncated_svd"
         description = "Truncated SVD (LSA) dimensionality reduction"
         categories = ["decomposition", "dimensionality-reduction"]
@@ -321,11 +362,13 @@ class TruncatedSvdFn(_BufferingTransform[ComponentsArgs]):
 
     @staticmethod
     def output_fields(feature_names: list[str], args: Any) -> list[pa.Field]:
+        """Return the non-id output fields for the given features."""
         k = TruncatedSvdFn._svd_k(args.n_components, len(feature_names))
         return [sfield(f"component_{i + 1}", pa.float64(), f"SVD component {i + 1}.") for i in range(k)]
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.decomposition import TruncatedSVD
 
         k = cls._svd_k(args.n_components, len(feature_names))
@@ -344,14 +387,20 @@ def _cluster_fields(_feature_names: list[str], _args: Any) -> list[pa.Field]:
 
 @dataclass(slots=True, frozen=True)
 class KMeansArgs(_BaseArgs):
+    """Arguments for the k_means function."""
+
     n_clusters: Annotated[int, Arg("n_clusters", default=8, doc="Number of clusters.")]
     random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
 
 
 class KMeansFn(_BufferingTransform[KMeansArgs]):
+    """K-Means clustering; emits a cluster label per row."""
+
     FunctionArguments: ClassVar[type] = KMeansArgs
 
     class Meta:
+        """VGI metadata for the kmeans function."""
+
         name = "kmeans"
         description = "K-Means clustering; emits a cluster label per row"
         categories = ["clustering"]
@@ -362,6 +411,7 @@ class KMeansFn(_BufferingTransform[KMeansArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.cluster import KMeans
 
         labels = KMeans(n_clusters=args.n_clusters, random_state=args.random_state, n_init=10).fit_predict(x)
@@ -370,14 +420,20 @@ class KMeansFn(_BufferingTransform[KMeansArgs]):
 
 @dataclass(slots=True, frozen=True)
 class DbscanArgs(_BaseArgs):
+    """Arguments for the dbscan function."""
+
     eps: Annotated[float, Arg("eps", default=0.5, doc="Max neighbourhood distance.")]
     min_samples: Annotated[int, Arg("min_samples", default=5, doc="Min samples to form a dense region.")]
 
 
 class DbscanFn(_BufferingTransform[DbscanArgs]):
+    """DBSCAN density clustering; emits a cluster label per row (-1 = noise)."""
+
     FunctionArguments: ClassVar[type] = DbscanArgs
 
     class Meta:
+        """VGI metadata for the dbscan function."""
+
         name = "dbscan"
         description = "DBSCAN density clustering; emits a cluster label per row (-1 = noise)"
         categories = ["clustering"]
@@ -388,6 +444,7 @@ class DbscanFn(_BufferingTransform[DbscanArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.cluster import DBSCAN
 
         labels = DBSCAN(eps=args.eps, min_samples=args.min_samples).fit_predict(x)
@@ -408,14 +465,20 @@ def _outlier_fields(_feature_names: list[str], _args: Any) -> list[pa.Field]:
 
 @dataclass(slots=True, frozen=True)
 class IsolationForestArgs(_BaseArgs):
+    """Arguments for the isolation_forest function."""
+
     contamination: Annotated[float, Arg("contamination", default=0.1, doc="Expected proportion of outliers (0-0.5).")]
     random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
 
 
 class IsolationForestFn(_BufferingTransform[IsolationForestArgs]):
+    """Isolation Forest outlier detection; emits an anomaly score and flag per row."""
+
     FunctionArguments: ClassVar[type] = IsolationForestArgs
 
     class Meta:
+        """VGI metadata for the isolation_forest function."""
+
         name = "isolation_forest"
         description = "Isolation Forest outlier detection; emits an anomaly score and flag per row"
         categories = ["outlier-detection"]
@@ -426,6 +489,7 @@ class IsolationForestFn(_BufferingTransform[IsolationForestArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.ensemble import IsolationForest
 
         model = IsolationForest(contamination=args.contamination, random_state=args.random_state)
@@ -443,9 +507,13 @@ class IsolationForestFn(_BufferingTransform[IsolationForestArgs]):
 
 
 class MaxAbsScalerFn(_BufferingTransform[_BaseArgs]):
+    """Scale each feature by its maximum absolute value (to [-1, 1])."""
+
     FunctionArguments: ClassVar[type] = _BaseArgs
 
     class Meta:
+        """VGI metadata for the maxabs_scaler function."""
+
         name = "maxabs_scaler"
         description = "Scale each feature by its maximum absolute value (to [-1, 1])"
         categories = ["preprocessing", "scaling"]
@@ -456,6 +524,7 @@ class MaxAbsScalerFn(_BufferingTransform[_BaseArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.preprocessing import MaxAbsScaler
 
         z = MaxAbsScaler().fit_transform(x)
@@ -464,13 +533,19 @@ class MaxAbsScalerFn(_BufferingTransform[_BaseArgs]):
 
 @dataclass(slots=True, frozen=True)
 class PowerTransformerArgs(_BaseArgs):
+    """Arguments for the power_transformer function."""
+
     method: Annotated[str, Arg("method", default="yeo-johnson", doc="'yeo-johnson' (any sign) or 'box-cox' (>0).")]
 
 
 class PowerTransformerFn(_BufferingTransform[PowerTransformerArgs]):
+    """Make features more Gaussian via a power transform (Yeo-Johnson / Box-Cox)."""
+
     FunctionArguments: ClassVar[type] = PowerTransformerArgs
 
     class Meta:
+        """VGI metadata for the power_transformer function."""
+
         name = "power_transformer"
         description = "Make features more Gaussian via a power transform (Yeo-Johnson / Box-Cox)"
         categories = ["preprocessing", "scaling"]
@@ -481,6 +556,7 @@ class PowerTransformerFn(_BufferingTransform[PowerTransformerArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.preprocessing import PowerTransformer
 
         z = PowerTransformer(method=args.method).fit_transform(x)
@@ -489,14 +565,20 @@ class PowerTransformerFn(_BufferingTransform[PowerTransformerArgs]):
 
 @dataclass(slots=True, frozen=True)
 class QuantileTransformerArgs(_BaseArgs):
+    """Arguments for the quantile_transformer function."""
+
     n_quantiles: Annotated[int, Arg("n_quantiles", default=1000, doc="Number of quantiles (capped at n_samples).")]
     output_distribution: Annotated[str, Arg("output_distribution", default="uniform", doc="'uniform' or 'normal'.")]
 
 
 class QuantileTransformerFn(_BufferingTransform[QuantileTransformerArgs]):
+    """Map features to a uniform or normal distribution via quantiles (robust to outliers)."""
+
     FunctionArguments: ClassVar[type] = QuantileTransformerArgs
 
     class Meta:
+        """VGI metadata for the quantile_transformer function."""
+
         name = "quantile_transformer"
         description = "Map features to a uniform or normal distribution via quantiles (robust to outliers)"
         categories = ["preprocessing", "scaling"]
@@ -507,6 +589,7 @@ class QuantileTransformerFn(_BufferingTransform[QuantileTransformerArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.preprocessing import QuantileTransformer
 
         n_q = max(1, min(args.n_quantiles, x.shape[0]))
@@ -516,13 +599,19 @@ class QuantileTransformerFn(_BufferingTransform[QuantileTransformerArgs]):
 
 @dataclass(slots=True, frozen=True)
 class BinarizerArgs(_BaseArgs):
+    """Arguments for the binarizer function."""
+
     threshold: Annotated[float, Arg("threshold", default=0.0, doc="Values above this map to 1, else 0.")]
 
 
 class BinarizerFn(_BufferingTransform[BinarizerArgs]):
+    """Threshold features to 0/1."""
+
     FunctionArguments: ClassVar[type] = BinarizerArgs
 
     class Meta:
+        """VGI metadata for the binarizer function."""
+
         name = "binarizer"
         description = "Threshold features to 0/1"
         categories = ["preprocessing"]
@@ -533,6 +622,7 @@ class BinarizerFn(_BufferingTransform[BinarizerArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.preprocessing import Binarizer
 
         z = Binarizer(threshold=args.threshold).fit_transform(x)
@@ -541,6 +631,8 @@ class BinarizerFn(_BufferingTransform[BinarizerArgs]):
 
 @dataclass(slots=True, frozen=True)
 class KBinsDiscretizerArgs(_BaseArgs):
+    """Arguments for the k_bins_discretizer function."""
+
     n_bins: Annotated[int, Arg("n_bins", default=5, doc="Number of bins per feature.")]
     strategy: Annotated[str, Arg("strategy", default="quantile", doc="'uniform', 'quantile', or 'kmeans'.")]
 
@@ -550,9 +642,13 @@ def _bin_fields(feature_names: list[str], _args: Any) -> list[pa.Field]:
 
 
 class KBinsDiscretizerFn(_BufferingTransform[KBinsDiscretizerArgs]):
+    """Discretize continuous features into integer bins (one bin index column per feature)."""
+
     FunctionArguments: ClassVar[type] = KBinsDiscretizerArgs
 
     class Meta:
+        """VGI metadata for the kbins_discretizer function."""
+
         name = "kbins_discretizer"
         description = "Discretize continuous features into integer bins (one bin index column per feature)"
         categories = ["preprocessing", "encoding"]
@@ -563,6 +659,7 @@ class KBinsDiscretizerFn(_BufferingTransform[KBinsDiscretizerArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.preprocessing import KBinsDiscretizer
 
         codes = KBinsDiscretizer(n_bins=args.n_bins, encode="ordinal", strategy=args.strategy).fit_transform(x)
@@ -576,14 +673,20 @@ class KBinsDiscretizerFn(_BufferingTransform[KBinsDiscretizerArgs]):
 
 @dataclass(slots=True, frozen=True)
 class AgglomerativeArgs(_BaseArgs):
+    """Arguments for the agglomerative function."""
+
     n_clusters: Annotated[int, Arg("n_clusters", default=2, doc="Number of clusters.")]
     linkage: Annotated[str, Arg("linkage", default="ward", doc="Linkage: ward, complete, average, single.")]
 
 
 class AgglomerativeFn(_BufferingTransform[AgglomerativeArgs]):
+    """Hierarchical (agglomerative) clustering; emits a cluster label per row."""
+
     FunctionArguments: ClassVar[type] = AgglomerativeArgs
 
     class Meta:
+        """VGI metadata for the agglomerative_clustering function."""
+
         name = "agglomerative_clustering"
         description = "Hierarchical (agglomerative) clustering; emits a cluster label per row"
         categories = ["clustering"]
@@ -594,6 +697,7 @@ class AgglomerativeFn(_BufferingTransform[AgglomerativeArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.cluster import AgglomerativeClustering
 
         labels = AgglomerativeClustering(n_clusters=args.n_clusters, linkage=args.linkage).fit_predict(x)
@@ -602,14 +706,20 @@ class AgglomerativeFn(_BufferingTransform[AgglomerativeArgs]):
 
 @dataclass(slots=True, frozen=True)
 class SpectralClusteringArgs(_BaseArgs):
+    """Arguments for the spectral_clustering function."""
+
     n_clusters: Annotated[int, Arg("n_clusters", default=2, doc="Number of clusters.")]
     random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
 
 
 class SpectralClusteringFn(_BufferingTransform[SpectralClusteringArgs]):
+    """Spectral clustering on the affinity graph; emits a cluster label per row."""
+
     FunctionArguments: ClassVar[type] = SpectralClusteringArgs
 
     class Meta:
+        """VGI metadata for the spectral_clustering function."""
+
         name = "spectral_clustering"
         description = "Spectral clustering on the affinity graph; emits a cluster label per row"
         categories = ["clustering"]
@@ -620,6 +730,7 @@ class SpectralClusteringFn(_BufferingTransform[SpectralClusteringArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.cluster import SpectralClustering
 
         labels = SpectralClustering(n_clusters=args.n_clusters, random_state=args.random_state).fit_predict(x)
@@ -628,13 +739,19 @@ class SpectralClusteringFn(_BufferingTransform[SpectralClusteringArgs]):
 
 @dataclass(slots=True, frozen=True)
 class MeanShiftArgs(_BaseArgs):
+    """Arguments for the mean_shift function."""
+
     bandwidth: Annotated[float, Arg("bandwidth", default=0.0, doc="Kernel bandwidth; 0 = estimate automatically.")]
 
 
 class MeanShiftFn(_BufferingTransform[MeanShiftArgs]):
+    """Mean-shift clustering (auto-discovers the number of clusters)."""
+
     FunctionArguments: ClassVar[type] = MeanShiftArgs
 
     class Meta:
+        """VGI metadata for the mean_shift function."""
+
         name = "mean_shift"
         description = "Mean-shift clustering (auto-discovers the number of clusters)"
         categories = ["clustering"]
@@ -645,6 +762,7 @@ class MeanShiftFn(_BufferingTransform[MeanShiftArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.cluster import MeanShift
 
         labels = MeanShift(bandwidth=args.bandwidth or None).fit_predict(x)
@@ -653,14 +771,20 @@ class MeanShiftFn(_BufferingTransform[MeanShiftArgs]):
 
 @dataclass(slots=True, frozen=True)
 class BirchArgs(_BaseArgs):
+    """Arguments for the birch function."""
+
     n_clusters: Annotated[int, Arg("n_clusters", default=3, doc="Number of clusters for the final step.")]
     threshold: Annotated[float, Arg("threshold", default=0.5, doc="Radius of a subcluster to absorb a sample.")]
 
 
 class BirchFn(_BufferingTransform[BirchArgs]):
+    """BIRCH clustering (memory-efficient for large datasets)."""
+
     FunctionArguments: ClassVar[type] = BirchArgs
 
     class Meta:
+        """VGI metadata for the birch function."""
+
         name = "birch"
         description = "BIRCH clustering (memory-efficient for large datasets)"
         categories = ["clustering"]
@@ -671,6 +795,7 @@ class BirchFn(_BufferingTransform[BirchArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.cluster import Birch
 
         labels = Birch(n_clusters=args.n_clusters, threshold=args.threshold).fit_predict(x)
@@ -679,13 +804,19 @@ class BirchFn(_BufferingTransform[BirchArgs]):
 
 @dataclass(slots=True, frozen=True)
 class OpticsArgs(_BaseArgs):
+    """Arguments for the optics function."""
+
     min_samples: Annotated[int, Arg("min_samples", default=5, doc="Min samples in a neighbourhood for a core point.")]
 
 
 class OpticsFn(_BufferingTransform[OpticsArgs]):
+    """OPTICS density clustering; emits a cluster label per row (-1 = noise)."""
+
     FunctionArguments: ClassVar[type] = OpticsArgs
 
     class Meta:
+        """VGI metadata for the optics function."""
+
         name = "optics"
         description = "OPTICS density clustering; emits a cluster label per row (-1 = noise)"
         categories = ["clustering"]
@@ -696,6 +827,7 @@ class OpticsFn(_BufferingTransform[OpticsArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.cluster import OPTICS
 
         labels = OPTICS(min_samples=args.min_samples).fit_predict(x)
@@ -703,9 +835,13 @@ class OpticsFn(_BufferingTransform[OpticsArgs]):
 
 
 class MiniBatchKMeansFn(_BufferingTransform[KMeansArgs]):
+    """Mini-batch K-Means clustering (faster on large datasets)."""
+
     FunctionArguments: ClassVar[type] = KMeansArgs
 
     class Meta:
+        """VGI metadata for the minibatch_kmeans function."""
+
         name = "minibatch_kmeans"
         description = "Mini-batch K-Means clustering (faster on large datasets)"
         categories = ["clustering"]
@@ -716,6 +852,7 @@ class MiniBatchKMeansFn(_BufferingTransform[KMeansArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.cluster import MiniBatchKMeans
 
         labels = MiniBatchKMeans(n_clusters=args.n_clusters, random_state=args.random_state, n_init=10).fit_predict(x)
@@ -724,15 +861,21 @@ class MiniBatchKMeansFn(_BufferingTransform[KMeansArgs]):
 
 @dataclass(slots=True, frozen=True)
 class GaussianMixtureArgs(_BaseArgs):
+    """Arguments for the gaussian_mixture function."""
+
     n_components: Annotated[int, Arg("n_components", default=2, doc="Number of mixture components (clusters).")]
     covariance_type: Annotated[str, Arg("covariance_type", default="full", doc="full, tied, diag, or spherical.")]
     random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
 
 
 class GaussianMixtureFn(_BufferingTransform[GaussianMixtureArgs]):
+    """Gaussian mixture model clustering; emits the most likely component per row."""
+
     FunctionArguments: ClassVar[type] = GaussianMixtureArgs
 
     class Meta:
+        """VGI metadata for the gaussian_mixture function."""
+
         name = "gaussian_mixture"
         description = "Gaussian mixture model clustering; emits the most likely component per row"
         categories = ["clustering"]
@@ -743,6 +886,7 @@ class GaussianMixtureFn(_BufferingTransform[GaussianMixtureArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.mixture import GaussianMixture
 
         labels = GaussianMixture(
@@ -758,14 +902,20 @@ class GaussianMixtureFn(_BufferingTransform[GaussianMixtureArgs]):
 
 @dataclass(slots=True, frozen=True)
 class LofArgs(_BaseArgs):
+    """Arguments for the lof function."""
+
     n_neighbors: Annotated[int, Arg("n_neighbors", default=20, doc="Number of neighbours to use.")]
     contamination: Annotated[float, Arg("contamination", default=0.1, doc="Expected proportion of outliers (0-0.5).")]
 
 
 class LocalOutlierFactorFn(_BufferingTransform[LofArgs]):
+    """Local Outlier Factor; emits an anomaly score and flag per row."""
+
     FunctionArguments: ClassVar[type] = LofArgs
 
     class Meta:
+        """VGI metadata for the local_outlier_factor function."""
+
         name = "local_outlier_factor"
         description = "Local Outlier Factor; emits an anomaly score and flag per row"
         categories = ["outlier-detection"]
@@ -776,6 +926,7 @@ class LocalOutlierFactorFn(_BufferingTransform[LofArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.neighbors import LocalOutlierFactor
 
         model = LocalOutlierFactor(n_neighbors=args.n_neighbors, contamination=args.contamination)
@@ -789,15 +940,21 @@ class LocalOutlierFactorFn(_BufferingTransform[LofArgs]):
 
 @dataclass(slots=True, frozen=True)
 class OneClassSvmArgs(_BaseArgs):
+    """Arguments for the one_class_svm function."""
+
     nu: Annotated[float, Arg("nu", default=0.5, doc="Upper bound on the fraction of outliers (0-1).")]
     kernel: Annotated[str, Arg("kernel", default="rbf", doc="Kernel: rbf, linear, poly, sigmoid.")]
     gamma: Annotated[str, Arg("gamma", default="scale", doc="Kernel coefficient ('scale' or 'auto').")]
 
 
 class OneClassSvmFn(_BufferingTransform[OneClassSvmArgs]):
+    """One-Class SVM novelty/outlier detection; emits an anomaly score and flag per row."""
+
     FunctionArguments: ClassVar[type] = OneClassSvmArgs
 
     class Meta:
+        """VGI metadata for the one_class_svm function."""
+
         name = "one_class_svm"
         description = "One-Class SVM novelty/outlier detection; emits an anomaly score and flag per row"
         categories = ["outlier-detection"]
@@ -808,6 +965,7 @@ class OneClassSvmFn(_BufferingTransform[OneClassSvmArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.svm import OneClassSVM
 
         model = OneClassSVM(nu=args.nu, kernel=args.kernel, gamma=args.gamma)
@@ -821,14 +979,20 @@ class OneClassSvmFn(_BufferingTransform[OneClassSvmArgs]):
 
 @dataclass(slots=True, frozen=True)
 class EllipticEnvelopeArgs(_BaseArgs):
+    """Arguments for the elliptic_envelope function."""
+
     contamination: Annotated[float, Arg("contamination", default=0.1, doc="Expected proportion of outliers (0-0.5).")]
     random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
 
 
 class EllipticEnvelopeFn(_BufferingTransform[EllipticEnvelopeArgs]):
+    """Elliptic Envelope (Gaussian) outlier detection; emits an anomaly score and flag per row."""
+
     FunctionArguments: ClassVar[type] = EllipticEnvelopeArgs
 
     class Meta:
+        """VGI metadata for the elliptic_envelope function."""
+
         name = "elliptic_envelope"
         description = "Elliptic Envelope (Gaussian) outlier detection; emits an anomaly score and flag per row"
         categories = ["outlier-detection"]
@@ -839,6 +1003,7 @@ class EllipticEnvelopeFn(_BufferingTransform[EllipticEnvelopeArgs]):
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.covariance import EllipticEnvelope
 
         model = EllipticEnvelope(contamination=args.contamination, random_state=args.random_state)
@@ -857,24 +1022,31 @@ class EllipticEnvelopeFn(_BufferingTransform[EllipticEnvelopeArgs]):
 
 @dataclass(slots=True, frozen=True)
 class TsneArgs(ComponentsArgs):
+    """Arguments for the tsne function."""
+
     perplexity: Annotated[float, Arg("perplexity", default=30.0, doc="Nearest-neighbour count proxy (< n_samples).")]
     random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
 
 
 class TsneFn(_BufferingTransform[TsneArgs]):
+    """t-SNE non-linear embedding (great for 2-D visualization)."""
+
     FunctionArguments: ClassVar[type] = TsneArgs
 
     class Meta:
+        """VGI metadata for the tsne function."""
+
         name = "tsne"
         description = "t-SNE non-linear embedding (great for 2-D visualization)"
         categories = ["manifold", "dimensionality-reduction"]
         examples = _ex("tsne", "n_components => 2")
         tags = {"vgi.columns_md": _COMPONENTS_MD}
 
-    output_fields = staticmethod(_component_fields)  # type: ignore[assignment]
+    output_fields = staticmethod(_component_fields)
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.manifold import TSNE
 
         k = _effective_components(args.n_components, len(feature_names))
@@ -884,23 +1056,30 @@ class TsneFn(_BufferingTransform[TsneArgs]):
 
 @dataclass(slots=True, frozen=True)
 class IsomapArgs(ComponentsArgs):
+    """Arguments for the isomap function."""
+
     n_neighbors: Annotated[int, Arg("n_neighbors", default=5, doc="Number of neighbours per point.")]
 
 
 class IsomapFn(_BufferingTransform[IsomapArgs]):
+    """Isomap non-linear embedding (geodesic distance preservation)."""
+
     FunctionArguments: ClassVar[type] = IsomapArgs
 
     class Meta:
+        """VGI metadata for the isomap function."""
+
         name = "isomap"
         description = "Isomap non-linear embedding (geodesic distance preservation)"
         categories = ["manifold", "dimensionality-reduction"]
         examples = _ex("isomap", "n_components => 2")
         tags = {"vgi.columns_md": _COMPONENTS_MD}
 
-    output_fields = staticmethod(_component_fields)  # type: ignore[assignment]
+    output_fields = staticmethod(_component_fields)
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.manifold import Isomap
 
         k = _effective_components(args.n_components, len(feature_names))
@@ -910,23 +1089,30 @@ class IsomapFn(_BufferingTransform[IsomapArgs]):
 
 @dataclass(slots=True, frozen=True)
 class SpectralEmbeddingArgs(ComponentsArgs):
+    """Arguments for the spectral_embedding function."""
+
     random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
 
 
 class SpectralEmbeddingFn(_BufferingTransform[SpectralEmbeddingArgs]):
+    """Spectral (Laplacian eigenmaps) non-linear embedding."""
+
     FunctionArguments: ClassVar[type] = SpectralEmbeddingArgs
 
     class Meta:
+        """VGI metadata for the spectral_embedding function."""
+
         name = "spectral_embedding"
         description = "Spectral (Laplacian eigenmaps) non-linear embedding"
         categories = ["manifold", "dimensionality-reduction"]
         examples = _ex("spectral_embedding", "n_components => 2")
         tags = {"vgi.columns_md": _COMPONENTS_MD}
 
-    output_fields = staticmethod(_component_fields)  # type: ignore[assignment]
+    output_fields = staticmethod(_component_fields)
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.manifold import SpectralEmbedding
 
         k = _effective_components(args.n_components, len(feature_names))
@@ -936,23 +1122,30 @@ class SpectralEmbeddingFn(_BufferingTransform[SpectralEmbeddingArgs]):
 
 @dataclass(slots=True, frozen=True)
 class MdsArgs(ComponentsArgs):
+    """Arguments for the mds function."""
+
     random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
 
 
 class MdsFn(_BufferingTransform[MdsArgs]):
+    """Multidimensional scaling embedding (distance preservation)."""
+
     FunctionArguments: ClassVar[type] = MdsArgs
 
     class Meta:
+        """VGI metadata for the mds function."""
+
         name = "mds"
         description = "Multidimensional scaling embedding (distance preservation)"
         categories = ["manifold", "dimensionality-reduction"]
         examples = _ex("mds", "n_components => 2")
         tags = {"vgi.columns_md": _COMPONENTS_MD}
 
-    output_fields = staticmethod(_component_fields)  # type: ignore[assignment]
+    output_fields = staticmethod(_component_fields)
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.manifold import MDS
 
         k = _effective_components(args.n_components, len(feature_names))
@@ -971,7 +1164,7 @@ class MdsFn(_BufferingTransform[MdsArgs]):
 # ===========================================================================
 
 
-class _EncoderBase[TArgs](SinkBuffer[TArgs, DrainState]):
+class _EncoderBase[TArgs: _BaseArgs](SinkBuffer[TArgs, DrainState]):
     """Buffer the whole input, encode string features once in finalize, stream out."""
 
     @classmethod
@@ -1027,9 +1220,13 @@ def _str_matrix(table: pa.Table, feats: list[str]) -> np.ndarray:
 
 
 class OrdinalEncoderFn(_EncoderBase[_BaseArgs]):
+    """Encode each categorical (string) column as integer codes (one column per feature)."""
+
     FunctionArguments: ClassVar[type] = _BaseArgs
 
     class Meta:
+        """VGI metadata for the ordinal_encoder function."""
+
         name = "ordinal_encoder"
         description = "Encode each categorical (string) column as integer codes (one column per feature)"
         categories = ["preprocessing", "encoding"]
@@ -1046,6 +1243,7 @@ class OrdinalEncoderFn(_EncoderBase[_BaseArgs]):
 
     @classmethod
     def output_schema(cls, input_schema: pa.Schema, feats: list[str], args: Any) -> pa.Schema:
+        """Build the full output schema (optional id column plus encoded columns)."""
         fields: list[pa.Field] = []
         if args.id:
             fields.append(input_schema.field(args.id))
@@ -1056,6 +1254,7 @@ class OrdinalEncoderFn(_EncoderBase[_BaseArgs]):
 
     @classmethod
     def encode(cls, table: pa.Table, feats: list[str], args: Any) -> dict[str, list[Any]]:
+        """Encode the buffered string features and return the output columns."""
         from sklearn.preprocessing import OrdinalEncoder
 
         enc = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1, encoded_missing_value=-1)
@@ -1069,9 +1268,13 @@ class OrdinalEncoderFn(_EncoderBase[_BaseArgs]):
 
 
 class OneHotEncoderFn(_EncoderBase[_BaseArgs]):
+    """One-hot encode categorical (string) columns in long format (id, feature, category, value)."""
+
     FunctionArguments: ClassVar[type] = _BaseArgs
 
     class Meta:
+        """VGI metadata for the one_hot_encoder function."""
+
         name = "one_hot_encoder"
         description = "One-hot encode categorical (string) columns in long format (id, feature, category, value)"
         categories = ["preprocessing", "encoding"]
@@ -1097,6 +1300,7 @@ class OneHotEncoderFn(_EncoderBase[_BaseArgs]):
 
     @classmethod
     def output_schema(cls, input_schema: pa.Schema, feats: list[str], args: Any) -> pa.Schema:
+        """Build the full output schema (optional id column plus encoded columns)."""
         fields: list[pa.Field] = []
         if args.id:
             fields.append(input_schema.field(args.id))
@@ -1111,6 +1315,7 @@ class OneHotEncoderFn(_EncoderBase[_BaseArgs]):
 
     @classmethod
     def encode(cls, table: pa.Table, feats: list[str], args: Any) -> dict[str, list[Any]]:
+        """Encode the buffered string features and return the output columns."""
         from sklearn.preprocessing import OneHotEncoder
 
         enc = OneHotEncoder(handle_unknown="ignore", sparse_output=True)
@@ -1144,13 +1349,19 @@ class OneHotEncoderFn(_EncoderBase[_BaseArgs]):
 
 @dataclass(slots=True, frozen=True)
 class TargetEncoderArgs(_BaseArgs):
+    """Arguments for the target_encoder function."""
+
     target: Annotated[str, Arg("target", default="", doc="Target column to encode against (required).")]
 
 
 class TargetEncoderFn(_EncoderBase[TargetEncoderArgs]):
+    """Encode each categorical column by its (cross-fitted) mean target value."""
+
     FunctionArguments: ClassVar[type] = TargetEncoderArgs
 
     class Meta:
+        """VGI metadata for the target_encoder function."""
+
         name = "target_encoder"
         description = "Encode each categorical column by its (cross-fitted) mean target value"
         categories = ["preprocessing", "encoding"]
@@ -1172,6 +1383,7 @@ class TargetEncoderFn(_EncoderBase[TargetEncoderArgs]):
 
     @classmethod
     def output_schema(cls, input_schema: pa.Schema, feats: list[str], args: TargetEncoderArgs) -> pa.Schema:
+        """Build the full output schema (optional id column plus encoded columns)."""
         fields: list[pa.Field] = []
         if args.id:
             fields.append(input_schema.field(args.id))
@@ -1183,6 +1395,7 @@ class TargetEncoderFn(_EncoderBase[TargetEncoderArgs]):
 
     @classmethod
     def on_bind(cls, params: BindParams[TargetEncoderArgs]) -> BindResponse:
+        """Validate arguments and resolve the output schema at bind time."""
         a = params.args
         if not a.target:
             raise ValueError("target_encoder requires 'target' (the column to encode against)")
@@ -1194,6 +1407,7 @@ class TargetEncoderFn(_EncoderBase[TargetEncoderArgs]):
 
     @classmethod
     def encode(cls, table: pa.Table, feats: list[str], args: TargetEncoderArgs) -> dict[str, list[Any]]:
+        """Encode the buffered string features and return the output columns."""
         from sklearn.preprocessing import TargetEncoder
 
         feats = cls._feats(table.schema, args)
@@ -1215,6 +1429,8 @@ class TargetEncoderFn(_EncoderBase[TargetEncoderArgs]):
 
 @dataclass(slots=True, frozen=True)
 class PolynomialFeaturesArgs(_BaseArgs):
+    """Arguments for the polynomial_features function."""
+
     degree: Annotated[int, Arg("degree", default=2, doc="Maximum degree of the polynomial features.")]
     interaction_only: Annotated[bool, Arg("interaction_only", default=False, doc="Only products of distinct features.")]
     include_bias: Annotated[
@@ -1236,9 +1452,13 @@ def _poly_names(feats: list[str], args: PolynomialFeaturesArgs) -> list[str]:
 
 
 class PolynomialFeaturesFn(_BufferingTransform[PolynomialFeaturesArgs]):
+    """Expand features into polynomial and interaction terms (e.g. a, b -> a, b, a^2, a*b, b^2)."""
+
     FunctionArguments: ClassVar[type] = PolynomialFeaturesArgs
 
     class Meta:
+        """VGI metadata for the polynomial_features function."""
+
         name = "polynomial_features"
         description = "Expand features into polynomial and interaction terms (e.g. a, b -> a, b, a^2, a*b, b^2)"
         categories = ["preprocessing", "feature-engineering"]
@@ -1255,12 +1475,14 @@ class PolynomialFeaturesFn(_BufferingTransform[PolynomialFeaturesArgs]):
 
     @staticmethod
     def output_fields(feature_names: list[str], args: Any) -> list[pa.Field]:
+        """Return the non-id output fields for the given features."""
         return [
             sfield(n, pa.float64(), f"Polynomial term {n}.", nullable=False) for n in _poly_names(feature_names, args)
         ]
 
     @classmethod
     def transform(cls, x: np.ndarray, feature_names: list[str], args: Any) -> dict[str, list[Any]]:
+        """Run the scikit-learn computation and return the output columns."""
         from sklearn.preprocessing import PolynomialFeatures
 
         expanded = PolynomialFeatures(

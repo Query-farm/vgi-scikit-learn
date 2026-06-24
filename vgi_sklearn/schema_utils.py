@@ -59,9 +59,12 @@ def _sql_type(t: pa.DataType) -> str:
 
 
 def columns_md(schema: pa.Schema, *, note: str | None = None) -> str:
-    """Render a Markdown table of a table function's RETURN columns for the
-    ``vgi.columns_md`` tag. DuckDB cannot expose a VGI table-function schema,
-    so this documents it. Reads each field's ``comment`` metadata."""
+    """Render a Markdown table of a table function's RETURN columns.
+
+    Feeds the ``vgi.columns_md`` tag: DuckDB cannot expose a VGI
+    table-function schema, so this documents it. Reads each field's
+    ``comment`` metadata.
+    """
     lines = ["| Column | Type | Description |", "| --- | --- | --- |"]
     for f in schema:
         desc = ""
@@ -75,8 +78,10 @@ def columns_md(schema: pa.Schema, *, note: str | None = None) -> str:
 
 
 def columns_md_rows(rows: list[tuple[str, str, str]], *, note: str | None = None) -> str:
-    """Same Markdown table, from explicit (column, type, description) rows --
-    for functions whose output schema is computed dynamically at bind."""
+    """Render the Markdown table from explicit (column, type, description) rows.
+
+    For functions whose output schema is computed dynamically at bind.
+    """
     lines = ["| Column | Type | Description |", "| --- | --- | --- |"]
     lines += [f"| `{n}` | {t} | {d} |" for n, t, d in rows]
     md = "\n".join(lines)

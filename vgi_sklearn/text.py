@@ -25,8 +25,9 @@ import pyarrow as pa
 from vgi.arguments import Arg, TableInput
 from vgi.invocation import BindResponse
 from vgi.metadata import FunctionExample
-from vgi.table_buffering_function import OutputCollector, TableBufferingParams
+from vgi.table_buffering_function import TableBufferingParams
 from vgi.table_function import BindParams
+from vgi_rpc.rpc import OutputCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of
 from .schema_utils import columns_md_rows
@@ -62,7 +63,7 @@ def _text_column(input_schema: pa.Schema, id_col: str, text_arg: str) -> str:
             "could not infer the text column; pass text := 'column' "
             f"(non-id columns: {', '.join(candidates) or '<none>'})"
         )
-    return candidates[0]
+    return str(candidates[0])
 
 
 class _Vectorizer(SinkBuffer[_VectorizerArgs, DrainState]):
@@ -168,10 +169,14 @@ class _Vectorizer(SinkBuffer[_VectorizerArgs, DrainState]):
 
 
 class CountVectorizerFn(_Vectorizer):
+    """Tokenize a text column into a document-term count matrix (long format)."""
+
     _value_type: ClassVar[pa.DataType] = pa.int64()
     _value_doc: ClassVar[str] = "Term count in the document."
 
     class Meta:
+        """VGI metadata for the count_vectorizer function."""
+
         name = "count_vectorizer"
         description = "Tokenize a text column into a document-term count matrix (long format)"
         categories = ["preprocessing", "text", "encoding"]
@@ -199,10 +204,14 @@ class CountVectorizerFn(_Vectorizer):
 
 
 class TfidfVectorizerFn(_Vectorizer):
+    """Tokenize a text column into a TF-IDF document-term matrix (long format)."""
+
     _value_type: ClassVar[pa.DataType] = pa.float64()
     _value_doc: ClassVar[str] = "TF-IDF weight of the term in the document."
 
     class Meta:
+        """VGI metadata for the tfidf_vectorizer function."""
+
         name = "tfidf_vectorizer"
         description = "Tokenize a text column into a TF-IDF document-term matrix (long format)"
         categories = ["preprocessing", "text", "encoding"]

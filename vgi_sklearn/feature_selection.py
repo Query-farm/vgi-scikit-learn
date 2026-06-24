@@ -24,8 +24,9 @@ import pyarrow as pa
 from vgi.arguments import Arg, TableInput
 from vgi.invocation import BindResponse
 from vgi.metadata import FunctionExample
-from vgi.table_buffering_function import OutputCollector, TableBufferingParams
+from vgi.table_buffering_function import TableBufferingParams
 from vgi.table_function import BindParams
+from vgi_rpc.rpc import OutputCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
 from .schema_utils import columns_md
@@ -71,6 +72,8 @@ def _score_func(name: str) -> Any:
 
 @dataclass(slots=True, frozen=True)
 class SelectKBestArgs:
+    """Arguments for the select_k_best function."""
+
     data: Annotated[TableInput, Arg(0, doc="Table of numeric features + the target column.")]
     target: Annotated[str, Arg("target", default="", doc="Name of the target/label column (required).")]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to exclude from features.")]
@@ -96,9 +99,13 @@ _SELECT_SCHEMA = pa.schema(
 
 
 class SelectKBest(SinkBuffer[SelectKBestArgs, DrainState]):
+    """Score each feature against the target and flag the top k."""
+
     FunctionArguments: ClassVar[type] = SelectKBestArgs
 
     class Meta:
+        """VGI metadata for the select_k_best function."""
+
         name = "select_k_best"
         description = "Univariate feature scores vs. the target, flagging the top k"
         categories = ["preprocessing", "feature-selection"]
@@ -116,6 +123,7 @@ class SelectKBest(SinkBuffer[SelectKBestArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[SelectKBestArgs]) -> BindResponse:
+        """Validate the target and score function and declare the per-feature schema."""
         a = params.args
         if not a.target:
             raise ValueError("select_k_best requires 'target' (the label column name, e.g. target := 'label')")
@@ -131,6 +139,7 @@ class SelectKBest(SinkBuffer[SelectKBestArgs, DrainState]):
     def initial_finalize_state(
         cls, finalize_state_id: bytes, params: TableBufferingParams[SelectKBestArgs]
     ) -> DrainState:
+        """Start with an unfinished drain state."""
         return DrainState()
 
     @classmethod
@@ -141,6 +150,7 @@ class SelectKBest(SinkBuffer[SelectKBestArgs, DrainState]):
         state: DrainState,
         out: OutputCollector,
     ) -> None:
+        """Score the buffered features against the target and emit one row per feature."""
         if state.done:
             out.finish()
             return
@@ -185,6 +195,8 @@ class SelectKBest(SinkBuffer[SelectKBestArgs, DrainState]):
 
 @dataclass(slots=True, frozen=True)
 class VarianceThresholdArgs:
+    """Arguments for the variance_threshold function."""
+
     data: Annotated[TableInput, Arg(0, doc="Table of numeric features.")]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to exclude from features.")]
     threshold: Annotated[float, Arg("threshold", default=0.0, doc="Keep features with variance strictly above this.")]
@@ -200,9 +212,13 @@ _VARIANCE_SCHEMA = pa.schema(
 
 
 class VarianceThreshold(SinkBuffer[VarianceThresholdArgs, DrainState]):
+    """Report per-feature variance and flag features above a threshold."""
+
     FunctionArguments: ClassVar[type] = VarianceThresholdArgs
 
     class Meta:
+        """VGI metadata for the variance_threshold function."""
+
         name = "variance_threshold"
         description = "Per-feature variance, flagging features above a threshold (unsupervised filter)"
         categories = ["preprocessing", "feature-selection"]
@@ -220,6 +236,7 @@ class VarianceThreshold(SinkBuffer[VarianceThresholdArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[VarianceThresholdArgs]) -> BindResponse:
+        """Declare the per-feature (feature, variance, selected) output schema."""
         assert params.bind_call.input_schema is not None
         return BindResponse(output_schema=_VARIANCE_SCHEMA)
 
@@ -227,6 +244,7 @@ class VarianceThreshold(SinkBuffer[VarianceThresholdArgs, DrainState]):
     def initial_finalize_state(
         cls, finalize_state_id: bytes, params: TableBufferingParams[VarianceThresholdArgs]
     ) -> DrainState:
+        """Start with an unfinished drain state."""
         return DrainState()
 
     @classmethod
@@ -237,6 +255,7 @@ class VarianceThreshold(SinkBuffer[VarianceThresholdArgs, DrainState]):
         state: DrainState,
         out: OutputCollector,
     ) -> None:
+        """Compute each feature's variance over the buffered table and flag it."""
         if state.done:
             out.finish()
             return

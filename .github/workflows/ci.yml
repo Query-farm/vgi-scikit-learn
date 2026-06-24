@@ -107,10 +107,12 @@ jobs:
       - name: Run extension integration suite
         run: ci/run-integration.sh
 
-  # Code style/lint gate (ruff). Platform-independent, so Linux-only; ruff comes
-  # from the `dev` dependency group (same as pytest in the unit job).
+  # Code style + types gate (ruff + mypy), matching the vgi-python tooling.
+  # Platform-independent, so Linux-only; the tools come from the `dev`
+  # dependency group (same as pytest in the unit job). Docstring consistency
+  # (pydoclint) is enforced inside the unit suite via tests/test_docstrings.py.
   lint:
-    name: ruff (lint + format)
+    name: ruff + mypy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -119,6 +121,8 @@ jobs:
         run: uv run --frozen --python 3.13 ruff check .
       - name: Ruff format check
         run: uv run --frozen --python 3.13 ruff format --check .
+      - name: Type check (mypy)
+        run: uv run --frozen --python 3.13 mypy vgi_sklearn/
 
   # Lint the worker's catalog metadata (descriptions, tags, examples, column
   # docs) with vgi-lint-check. Metadata quality is platform-independent, so

@@ -26,8 +26,9 @@ from typing import Annotated, Any
 from vgi.arguments import Arg, TableInput
 from vgi.invocation import BindResponse
 from vgi.metadata import FunctionExample
-from vgi.table_buffering_function import OutputCollector, TableBufferingParams
+from vgi.table_buffering_function import TableBufferingParams
 from vgi.table_function import BindParams
+from vgi_rpc.rpc import OutputCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of
 from .models import _ESTIMATORS, _FIT_SCHEMA, _fit_and_emit
@@ -75,12 +76,18 @@ _HGB = [
     _HP("l2_regularization", float, 0.0, "L2 regularization."),
     _HP("random_state", int, 0, "Random seed."),
 ]
-_TREE = lambda crit: [  # noqa: E731
-    _HP("max_depth", int, 0, "Max tree depth; 0 = unlimited.", none_if=0),
-    _HP("min_samples_split", int, 2, "Min samples to split an internal node."),
-    _HP("criterion", str, crit, "Split quality criterion."),
-    _HP("random_state", int, 0, "Random seed."),
-]
+
+
+def _TREE(crit: str) -> list[_HP]:
+    """Common decision-tree hyperparameters with the given default split criterion."""
+    return [
+        _HP("max_depth", int, 0, "Max tree depth; 0 = unlimited.", none_if=0),
+        _HP("min_samples_split", int, 2, "Min samples to split an internal node."),
+        _HP("criterion", str, crit, "Split quality criterion."),
+        _HP("random_state", int, 0, "Random seed."),
+    ]
+
+
 _KNN = [
     _HP("n_neighbors", int, 5, "Number of neighbours."),
     _HP("weights", str, "uniform", "Neighbour weighting ('uniform' or 'distance')."),
@@ -330,7 +337,7 @@ def _make_fit_function(est_name: str) -> type:
         a = params.args
         kwargs = _estimator_kwargs(spec, a)
         estimator = est_cls(**{**defaults, **kwargs})
-        table = cls.buffered_table(params, input_schema_of(params))
+        table = cls.buffered_table(params, input_schema_of(params))  # type: ignore[attr-defined]  # dynamically-generated SinkBuffer subclass
         _fit_and_emit(
             out,
             params.output_schema,
@@ -372,7 +379,8 @@ def _make_fit_function(est_name: str) -> type:
         "finalize": classmethod(finalize),
     }
     cls_name = "Fit" + "".join(p.title() for p in est_name.split("_"))
-    return types.new_class(cls_name, (SinkBuffer[args_cls, DrainState],), {}, lambda ns: ns.update(namespace))
+    base = SinkBuffer[args_cls, DrainState]  # type: ignore[valid-type]  # args_cls is a runtime-built dataclass
+    return types.new_class(cls_name, (base,), {}, lambda ns: ns.update(namespace))
 
 
 TYPED_FIT_FUNCTIONS: list[type] = [_make_fit_function(name) for name in _HPARAMS]

@@ -33,7 +33,7 @@ import sklearn
 from vgi.arguments import Arg, TableInput
 from vgi.invocation import BindResponse
 from vgi.metadata import FunctionExample
-from vgi.table_buffering_function import OutputCollector, TableBufferingParams
+from vgi.table_buffering_function import TableBufferingParams
 from vgi.table_function import (
     BindParams,
     ProcessParams,
@@ -42,8 +42,9 @@ from vgi.table_function import (
     bind_fixed_schema,
     init_single_worker,
 )
-from vgi.table_in_out_function import OutputCollector as InOutCollector
 from vgi.table_in_out_function import TableInOutGenerator
+from vgi_rpc.rpc import OutputCollector
+from vgi_rpc.rpc import OutputCollector as InOutCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
 from .registry import (
@@ -137,6 +138,8 @@ def _parse_params(params: str) -> dict[str, Any]:
 
 @dataclass(slots=True, frozen=True)
 class FitTransformerArgs:
+    """Arguments for the fit_transformer function."""
+
     data: Annotated[TableInput, Arg(0, doc="Training table (numeric feature columns [+ id]).")]
     transformer_name: Annotated[
         str, Arg("transformer_name", default="", doc="Name to store the fitted transformer under (optional).")
@@ -166,9 +169,13 @@ def _output_names(feats: list[str], n_output: int) -> list[str]:
 
 
 class FitTransformer(SinkBuffer[FitTransformerArgs, DrainState]):
+    """Buffer a training table, fit a transformer, return it as a BLOB; persist if named."""
+
     FunctionArguments: ClassVar[type] = FitTransformerArgs
 
     class Meta:
+        """VGI metadata for the fit_transformer function."""
+
         name = "fit_transformer"
         description = "Fit a transformer (scaler/PCA/imputer/...) and return it as a BLOB; persist if named"
         categories = ["preprocessing", "registry"]
@@ -186,6 +193,7 @@ class FitTransformer(SinkBuffer[FitTransformerArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[FitTransformerArgs]) -> BindResponse:
+        """Validate the kind and name and declare the fit summary output schema."""
         a = params.args
         if a.kind not in TRANSFORMER_KINDS:
             raise ValueError(f"unknown transformer kind {a.kind!r}; choose one of: {', '.join(TRANSFORMER_KINDS)}")
@@ -198,6 +206,7 @@ class FitTransformer(SinkBuffer[FitTransformerArgs, DrainState]):
     def initial_finalize_state(
         cls, finalize_state_id: bytes, params: TableBufferingParams[FitTransformerArgs]
     ) -> DrainState:
+        """Start with an unfinished drain state."""
         return DrainState()
 
     @classmethod
@@ -208,6 +217,7 @@ class FitTransformer(SinkBuffer[FitTransformerArgs, DrainState]):
         state: DrainState,
         out: OutputCollector,
     ) -> None:
+        """Fit the transformer on the buffered table, persist if named, emit a summary."""
         if state.done:
             out.finish()
             return
@@ -264,6 +274,8 @@ class FitTransformer(SinkBuffer[FitTransformerArgs, DrainState]):
 
 @dataclass(slots=True, frozen=True)
 class ApplyTransformArgs:
+    """Arguments for the apply_transform function."""
+
     data: Annotated[TableInput, Arg(0, doc="Table to transform (must contain the transformer's feature columns).")]
     transformer_name: Annotated[
         str, Arg("transformer_name", default="", doc="Name of a stored transformer. Provide this OR transformer.")
@@ -280,9 +292,13 @@ def _load_blob(blob: bytes) -> tuple[Any, TransformerMetadata]:
 
 
 class ApplyTransform(TableInOutGenerator[ApplyTransformArgs]):
+    """Stream a table through a stored, already-fitted transformer."""
+
     FunctionArguments: ClassVar[type] = ApplyTransformArgs
 
     class Meta:
+        """VGI metadata for the apply_transform function."""
+
         name = "apply_transform"
         description = "Stream a table through a stored, already-fitted transformer"
         categories = ["preprocessing", "registry", "inference"]
@@ -317,6 +333,7 @@ class ApplyTransform(TableInOutGenerator[ApplyTransformArgs]):
 
     @classmethod
     def on_bind(cls, params: BindParams[ApplyTransformArgs]) -> BindResponse:
+        """Resolve the stored transformer and declare its output column schema."""
         a = params.args
         if not a.transformer_name and not a.transformer:
             raise ValueError("apply_transform requires either 'transformer_name' or 'transformer' (a BLOB)")
@@ -353,6 +370,7 @@ class ApplyTransform(TableInOutGenerator[ApplyTransformArgs]):
         batch: pa.RecordBatch,
         out: InOutCollector,
     ) -> None:
+        """Transform each batch with the loaded transformer and emit the result."""
         a = params.args
         transformer, meta = cls._load(params)
 
@@ -408,9 +426,13 @@ class _NoArgs:
 @init_single_worker
 @bind_fixed_schema
 class ListTransformers(TableFunctionGenerator[_NoArgs]):
+    """List all stored transformers."""
+
     FIXED_SCHEMA: ClassVar[pa.Schema] = _TRANSFORMER_INFO_SCHEMA
 
     class Meta:
+        """VGI metadata for the list_transformers function."""
+
         name = "list_transformers"
         description = "List all stored transformers"
         categories = ["preprocessing", "registry"]
@@ -421,10 +443,12 @@ class ListTransformers(TableFunctionGenerator[_NoArgs]):
 
     @classmethod
     def cardinality(cls, params: BindParams[_NoArgs]) -> TableCardinality:
+        """Estimate the number of stored transformers."""
         return TableCardinality(estimate=10, max=10000)
 
     @classmethod
     def process(cls, params: ProcessParams[_NoArgs], state: None, out: OutputCollector) -> None:
+        """Emit one row per stored transformer."""
         out.emit(
             pa.RecordBatch.from_pydict(_transformer_rows(get_transformer_store().list()), schema=params.output_schema)
         )
@@ -433,6 +457,8 @@ class ListTransformers(TableFunctionGenerator[_NoArgs]):
 
 @dataclass(slots=True, frozen=True)
 class DropTransformerArgs:
+    """Arguments for the drop_transformer function."""
+
     transformer_name: Annotated[str, Arg(0, doc="Name of the transformer to delete.")]
 
 
@@ -447,9 +473,13 @@ _DROP_TRANSFORMER_SCHEMA = pa.schema(
 @init_single_worker
 @bind_fixed_schema
 class DropTransformer(TableFunctionGenerator[DropTransformerArgs]):
+    """Delete a transformer from the registry."""
+
     FIXED_SCHEMA: ClassVar[pa.Schema] = _DROP_TRANSFORMER_SCHEMA
 
     class Meta:
+        """VGI metadata for the drop_transformer function."""
+
         name = "drop_transformer"
         description = "Delete a transformer from the registry"
         categories = ["preprocessing", "registry"]
@@ -462,10 +492,12 @@ class DropTransformer(TableFunctionGenerator[DropTransformerArgs]):
 
     @classmethod
     def cardinality(cls, params: BindParams[DropTransformerArgs]) -> TableCardinality:
+        """The drop result is always a single row."""
         return TableCardinality(estimate=1, max=1)
 
     @classmethod
     def process(cls, params: ProcessParams[DropTransformerArgs], state: None, out: OutputCollector) -> None:
+        """Delete the named transformer and emit whether it existed."""
         name = params.args.transformer_name
         dropped = get_transformer_store().delete(name)
         out.emit(

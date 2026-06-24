@@ -28,8 +28,9 @@ from sklearn.pipeline import Pipeline
 from vgi.arguments import Arg, TableInput
 from vgi.invocation import BindResponse
 from vgi.metadata import FunctionExample
-from vgi.table_buffering_function import OutputCollector, TableBufferingParams
+from vgi.table_buffering_function import TableBufferingParams
 from vgi.table_function import BindParams
+from vgi_rpc.rpc import OutputCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of
 from .models import _ESTIMATORS, _FIT_SCHEMA, _fit_and_emit, _parse_params, build_estimator
@@ -62,6 +63,8 @@ def _parse_steps(steps: str) -> list[tuple[str, dict[str, Any]]]:
 
 @dataclass(slots=True, frozen=True)
 class FitPipelineArgs:
+    """Arguments for the fit_pipeline function."""
+
     data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
     steps: Annotated[
         str,
@@ -75,9 +78,13 @@ class FitPipelineArgs:
 
 
 class FitPipeline(SinkBuffer[FitPipelineArgs, DrainState]):
+    """Fit preprocessing steps plus an estimator as one stored model."""
+
     FunctionArguments: ClassVar[type] = FitPipelineArgs
 
     class Meta:
+        """VGI metadata for the fit_pipeline function."""
+
         name = "fit_pipeline"
         description = "Fit preprocessing steps + an estimator as one model; predict with the usual 'predict'"
         categories = ["models", "supervised", "pipeline"]
@@ -97,6 +104,7 @@ class FitPipeline(SinkBuffer[FitPipelineArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[FitPipelineArgs]) -> BindResponse:
+        """Validate the estimator, steps, and target and declare the fit summary schema."""
         a = params.args
         if not a.target:
             raise ValueError("fit_pipeline requires 'target' (the label column name, e.g. target := 'label')")
@@ -115,6 +123,7 @@ class FitPipeline(SinkBuffer[FitPipelineArgs, DrainState]):
     def initial_finalize_state(
         cls, finalize_state_id: bytes, params: TableBufferingParams[FitPipelineArgs]
     ) -> DrainState:
+        """Start with an unfinished drain state."""
         return DrainState()
 
     @classmethod
@@ -125,6 +134,7 @@ class FitPipeline(SinkBuffer[FitPipelineArgs, DrainState]):
         state: DrainState,
         out: OutputCollector,
     ) -> None:
+        """Assemble the pipeline, fit it on the buffered table, and emit the model."""
         if state.done:
             out.finish()
             return

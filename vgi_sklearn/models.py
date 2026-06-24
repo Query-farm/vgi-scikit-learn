@@ -68,7 +68,7 @@ from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from vgi.arguments import Arg, TableInput
 from vgi.invocation import BindResponse
 from vgi.metadata import FunctionExample
-from vgi.table_buffering_function import OutputCollector, TableBufferingParams
+from vgi.table_buffering_function import TableBufferingParams
 from vgi.table_function import (
     BindParams,
     ProcessParams,
@@ -77,8 +77,10 @@ from vgi.table_function import (
     bind_fixed_schema,
     init_single_worker,
 )
-from vgi.table_in_out_function import OutputCollector as InOutCollector
 from vgi.table_in_out_function import TableInOutGenerator
+from vgi_rpc.log import Level
+from vgi_rpc.rpc import OutputCollector
+from vgi_rpc.rpc import OutputCollector as InOutCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of
 from .features import build_x, categorical_mask, rows_from_table, wrap_estimator
@@ -212,6 +214,8 @@ def _prediction_field(task: str) -> pa.Field:
 # during argument parsing.
 @dataclass(slots=True, frozen=True)
 class FitArgs:
+    """Arguments for the fit function."""
+
     data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
     model_name: Annotated[str, Arg("model_name", default="", doc="Name to store the fitted model under (required).")]
     estimator: Annotated[str, Arg("estimator", default="random_forest_classifier", doc="Estimator name.")]
@@ -301,9 +305,13 @@ def _fit_and_emit(
 
 
 class FitModel(SinkBuffer[FitArgs, DrainState]):
+    """Buffer a training table, fit an estimator, persist it, return a summary + BLOB."""
+
     FunctionArguments: ClassVar[type] = FitArgs
 
     class Meta:
+        """VGI metadata for the fit function."""
+
         name = "fit"
         description = "Fit a supervised estimator and store it in the model registry"
         categories = ["models", "supervised"]
@@ -322,6 +330,7 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[FitArgs]) -> BindResponse:
+        """Validate the estimator, hyperparameters, and target column at bind time."""
         a = params.args
         # model_name is optional: the model is always returned as a BLOB; when a
         # name is given it is also persisted to the registry.
@@ -339,6 +348,7 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
 
     @classmethod
     def initial_finalize_state(cls, finalize_state_id: bytes, params: TableBufferingParams[FitArgs]) -> DrainState:
+        """Start with an unfinished drain state."""
         return DrainState()
 
     @classmethod
@@ -349,6 +359,7 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
         state: DrainState,
         out: OutputCollector,
     ) -> None:
+        """Fit on the buffered table and emit the one-row training summary + BLOB."""
         if state.done:
             out.finish()
             return
@@ -378,6 +389,8 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
 
 @dataclass(slots=True, frozen=True)
 class PredictArgs:
+    """Arguments for the predict function."""
+
     data: Annotated[TableInput, Arg(0, doc="Table to score (must contain the model's feature columns).")]
     model_name: Annotated[
         str, Arg("model_name", default="", doc="Name of a model in the registry. Provide this OR model.")
@@ -398,9 +411,13 @@ _VERSION_WARNED: set[bytes] = set()
 
 
 class PredictModel(TableInOutGenerator[PredictArgs]):
+    """Stream a table through a stored model, emitting predictions (and optional probabilities)."""
+
     FunctionArguments: ClassVar[type] = PredictArgs
 
     class Meta:
+        """VGI metadata for the predict function."""
+
         name = "predict"
         description = "Score a table through a stored model, emitting predictions"
         categories = ["models", "supervised", "inference"]
@@ -431,6 +448,7 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
 
     @classmethod
     def on_bind(cls, params: BindParams[PredictArgs]) -> BindResponse:
+        """Resolve the model's metadata and build the prediction output schema."""
         a = params.args
         if not a.model_name and not a.model:
             raise ValueError("predict requires either 'model_name' (a registry name) or 'model' (a model BLOB)")
@@ -466,6 +484,7 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
 
     @classmethod
     def _model(cls, params: ProcessParams[PredictArgs]) -> tuple[Any, ModelMetadata]:
+        assert params.init_response is not None
         key = params.init_response.execution_id
         cached = _PREDICT_CACHE.get(key)
         if cached is None:
@@ -482,15 +501,17 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
         batch: pa.RecordBatch,
         out: InOutCollector,
     ) -> None:
+        """Score one batch with the cached model, emitting predictions (+ probabilities)."""
         a = params.args
         estimator, meta = cls._model(params)
 
+        assert params.init_response is not None
         key = params.init_response.execution_id
         if meta.sklearn_version and meta.sklearn_version != sklearn.__version__ and key not in _VERSION_WARNED:
             _VERSION_WARNED.add(key)
             with contextlib.suppress(Exception):
                 out.client_log(
-                    "warning",
+                    Level.WARN,
                     f"model {(a.model_name or '<blob>')!r} was fitted with scikit-learn {meta.sklearn_version}, "
                     f"worker has {sklearn.__version__}; predictions may differ",
                 )
@@ -523,6 +544,8 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
 
 @dataclass(slots=True, frozen=True)
 class CrossValArgs:
+    """Arguments for the cross_val_predict function."""
+
     data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
     estimator: Annotated[str, Arg("estimator", default="random_forest_classifier", doc="Estimator name.")]
     target: Annotated[str, Arg("target", default="", doc="Name of the target/label column (required).")]
@@ -532,9 +555,13 @@ class CrossValArgs:
 
 
 class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
+    """Buffer a training table and emit out-of-fold cross-validated predictions (no persistence)."""
+
     FunctionArguments: ClassVar[type] = CrossValArgs
 
     class Meta:
+        """VGI metadata for the cross_val_predict function."""
+
         name = "cross_val_predict"
         description = "Out-of-fold cross-validated predictions (no model is stored)"
         categories = ["models", "supervised", "evaluation"]
@@ -563,6 +590,7 @@ class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[CrossValArgs]) -> BindResponse:
+        """Validate the estimator and target, then build the prediction output schema."""
         a = params.args
         if not a.target:
             raise ValueError("cross_val_predict requires 'target' (the label column name, e.g. target := 'label')")
@@ -579,6 +607,7 @@ class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
 
     @classmethod
     def initial_finalize_state(cls, finalize_state_id: bytes, params: TableBufferingParams[CrossValArgs]) -> DrainState:
+        """Start with an unfinished drain state."""
         return DrainState()
 
     @classmethod
@@ -589,6 +618,7 @@ class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
         state: DrainState,
         out: OutputCollector,
     ) -> None:
+        """Run cross_val_predict on the buffered table and emit out-of-fold predictions."""
         if state.done:
             out.finish()
             return
@@ -624,6 +654,8 @@ class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
 
 @dataclass(slots=True, frozen=True)
 class CrossValScoreArgs:
+    """Arguments for the cross_val_score function."""
+
     data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
     estimator: Annotated[str, Arg("estimator", default="random_forest_classifier", doc="Estimator name.")]
     target: Annotated[str, Arg("target", default="", doc="Name of the target/label column (required).")]
@@ -642,9 +674,13 @@ _CV_SCORE_SCHEMA = pa.schema(
 
 
 class CrossValScore(SinkBuffer[CrossValScoreArgs, DrainState]):
+    """Buffer a training table and emit cross-validated held-out scores, one row per fold."""
+
     FunctionArguments: ClassVar[type] = CrossValScoreArgs
 
     class Meta:
+        """VGI metadata for the cross_val_score function."""
+
         name = "cross_val_score"
         description = "Cross-validated held-out scores, one row per fold (no model is stored)"
         categories = ["models", "supervised", "evaluation"]
@@ -662,6 +698,7 @@ class CrossValScore(SinkBuffer[CrossValScoreArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[CrossValScoreArgs]) -> BindResponse:
+        """Validate the estimator and target column at bind time."""
         a = params.args
         if not a.target:
             raise ValueError("cross_val_score requires 'target' (the label column name, e.g. target := 'label')")
@@ -676,6 +713,7 @@ class CrossValScore(SinkBuffer[CrossValScoreArgs, DrainState]):
     def initial_finalize_state(
         cls, finalize_state_id: bytes, params: TableBufferingParams[CrossValScoreArgs]
     ) -> DrainState:
+        """Start with an unfinished drain state."""
         return DrainState()
 
     @classmethod
@@ -686,6 +724,7 @@ class CrossValScore(SinkBuffer[CrossValScoreArgs, DrainState]):
         state: DrainState,
         out: OutputCollector,
     ) -> None:
+        """Run cross_val_score on the buffered table and emit one row per fold."""
         if state.done:
             out.finish()
             return
@@ -718,6 +757,8 @@ class CrossValScore(SinkBuffer[CrossValScoreArgs, DrainState]):
 
 @dataclass(slots=True, frozen=True)
 class PermImportanceArgs:
+    """Arguments for the permutation_importance function."""
+
     data: Annotated[TableInput, Arg(0, doc="Evaluation table (the model's features + the target column).")]
     model_name: Annotated[
         str, Arg("model_name", default="", doc="Name of a model in the registry. Provide this OR model.")
@@ -741,9 +782,13 @@ _PERM_SCHEMA = pa.schema(
 
 
 class PermutationImportance(SinkBuffer[PermImportanceArgs, DrainState]):
+    """Buffer an evaluation table and emit per-feature permutation importance for a stored model."""
+
     FunctionArguments: ClassVar[type] = PermImportanceArgs
 
     class Meta:
+        """VGI metadata for the permutation_importance function."""
+
         name = "permutation_importance"
         description = "Model-agnostic feature importance: the drop in score when each feature is shuffled"
         categories = ["models", "inspection", "evaluation"]
@@ -760,6 +805,7 @@ class PermutationImportance(SinkBuffer[PermImportanceArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[PermImportanceArgs]) -> BindResponse:
+        """Resolve the model's metadata and validate feature + target columns at bind."""
         a = params.args
         if not a.model_name and not a.model:
             raise ValueError("permutation_importance requires either 'model_name' or 'model' (a model BLOB)")
@@ -788,6 +834,7 @@ class PermutationImportance(SinkBuffer[PermImportanceArgs, DrainState]):
     def initial_finalize_state(
         cls, finalize_state_id: bytes, params: TableBufferingParams[PermImportanceArgs]
     ) -> DrainState:
+        """Start with an unfinished drain state."""
         return DrainState()
 
     @classmethod
@@ -798,6 +845,7 @@ class PermutationImportance(SinkBuffer[PermImportanceArgs, DrainState]):
         state: DrainState,
         out: OutputCollector,
     ) -> None:
+        """Compute permutation importance on the buffered table and emit one row per feature."""
         if state.done:
             out.finish()
             return
@@ -838,6 +886,8 @@ class PermutationImportance(SinkBuffer[PermImportanceArgs, DrainState]):
 
 @dataclass(slots=True, frozen=True)
 class PartialDependenceArgs:
+    """Arguments for the partial_dependence function."""
+
     data: Annotated[TableInput, Arg(0, doc="Background table (the model's feature columns).")]
     model_name: Annotated[
         str, Arg("model_name", default="", doc="Name of a model in the registry. Provide this OR model.")
@@ -857,9 +907,13 @@ _PD_SCHEMA = pa.schema(
 
 
 class PartialDependence(SinkBuffer[PartialDependenceArgs, DrainState]):
+    """Buffer a background table and emit how a stored model's prediction varies over one feature."""
+
     FunctionArguments: ClassVar[type] = PartialDependenceArgs
 
     class Meta:
+        """VGI metadata for the partial_dependence function."""
+
         name = "partial_dependence"
         description = "How a stored model's average prediction changes as one feature varies over a grid"
         categories = ["models", "inspection"]
@@ -876,6 +930,7 @@ class PartialDependence(SinkBuffer[PartialDependenceArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[PartialDependenceArgs]) -> BindResponse:
+        """Resolve the model and validate that the chosen feature is numeric and present."""
         a = params.args
         if not a.model_name and not a.model:
             raise ValueError("partial_dependence requires either 'model_name' or 'model' (a model BLOB)")
@@ -900,6 +955,7 @@ class PartialDependence(SinkBuffer[PartialDependenceArgs, DrainState]):
     def initial_finalize_state(
         cls, finalize_state_id: bytes, params: TableBufferingParams[PartialDependenceArgs]
     ) -> DrainState:
+        """Start with an unfinished drain state."""
         return DrainState()
 
     @classmethod
@@ -910,6 +966,7 @@ class PartialDependence(SinkBuffer[PartialDependenceArgs, DrainState]):
         state: DrainState,
         out: OutputCollector,
     ) -> None:
+        """Compute partial dependence over the buffered table and emit the long-format curve(s)."""
         if state.done:
             out.finish()
             return
@@ -992,15 +1049,19 @@ def _meta_rows(metas: list[ModelMetadata]) -> dict[str, list[Any]]:
 
 @dataclass(slots=True, frozen=True)
 class NoArgs:
-    pass
+    """Empty argument set for the zero-argument registry functions."""
 
 
 @init_single_worker
 @bind_fixed_schema
 class ListModels(TableFunctionGenerator[NoArgs]):
+    """List metadata for every model in the registry."""
+
     FIXED_SCHEMA: ClassVar[pa.Schema] = _MODEL_INFO_SCHEMA
 
     class Meta:
+        """VGI metadata for the list_models function."""
+
         name = "list_models"
         description = "List all models in the registry"
         categories = ["models", "registry"]
@@ -1009,25 +1070,33 @@ class ListModels(TableFunctionGenerator[NoArgs]):
 
     @classmethod
     def cardinality(cls, params: BindParams[NoArgs]) -> TableCardinality:
+        """Rough estimate of the number of stored models."""
         return TableCardinality(estimate=10, max=10000)
 
     @classmethod
     def process(cls, params: ProcessParams[NoArgs], state: None, out: OutputCollector) -> None:
+        """Emit one row of metadata per stored model."""
         out.emit(pa.RecordBatch.from_pydict(_meta_rows(get_store().list()), schema=params.output_schema))
         out.finish()
 
 
 @dataclass(slots=True, frozen=True)
 class ModelInfoArgs:
+    """Arguments for the model_info function."""
+
     model_name: Annotated[str, Arg(0, doc="Name of a stored model.")]
 
 
 @init_single_worker
 @bind_fixed_schema
 class ModelInfo(TableFunctionGenerator[ModelInfoArgs]):
+    """Describe a single stored model (one row, empty if absent)."""
+
     FIXED_SCHEMA: ClassVar[pa.Schema] = _MODEL_INFO_SCHEMA
 
     class Meta:
+        """VGI metadata for the model_info function."""
+
         name = "model_info"
         description = "Describe a single stored model (one row, empty if absent)"
         categories = ["models", "registry"]
@@ -1038,10 +1107,12 @@ class ModelInfo(TableFunctionGenerator[ModelInfoArgs]):
 
     @classmethod
     def cardinality(cls, params: BindParams[ModelInfoArgs]) -> TableCardinality:
+        """At most one row (the named model, if present)."""
         return TableCardinality(estimate=1, max=1)
 
     @classmethod
     def process(cls, params: ProcessParams[ModelInfoArgs], state: None, out: OutputCollector) -> None:
+        """Emit the named model's metadata, or nothing if it is absent."""
         try:
             metas = [get_store().load_meta(params.args.model_name)]
         except ModelNotFoundError:
@@ -1052,6 +1123,8 @@ class ModelInfo(TableFunctionGenerator[ModelInfoArgs]):
 
 @dataclass(slots=True, frozen=True)
 class DropModelArgs:
+    """Arguments for the drop_model function."""
+
     model_name: Annotated[str, Arg(0, doc="Name of the model to delete.")]
 
 
@@ -1066,9 +1139,13 @@ _DROP_SCHEMA = pa.schema(
 @init_single_worker
 @bind_fixed_schema
 class DropModel(TableFunctionGenerator[DropModelArgs]):
+    """Delete a model from the registry."""
+
     FIXED_SCHEMA: ClassVar[pa.Schema] = _DROP_SCHEMA
 
     class Meta:
+        """VGI metadata for the drop_model function."""
+
         name = "drop_model"
         description = "Delete a model from the registry"
         categories = ["models", "registry"]
@@ -1079,10 +1156,12 @@ class DropModel(TableFunctionGenerator[DropModelArgs]):
 
     @classmethod
     def cardinality(cls, params: BindParams[DropModelArgs]) -> TableCardinality:
+        """Always exactly one row (the drop result)."""
         return TableCardinality(estimate=1, max=1)
 
     @classmethod
     def process(cls, params: ProcessParams[DropModelArgs], state: None, out: OutputCollector) -> None:
+        """Delete the named model and emit whether it existed."""
         name = params.args.model_name
         dropped = get_store().delete(name)
         out.emit(pa.RecordBatch.from_pydict({"model_name": [name], "dropped": [dropped]}, schema=params.output_schema))

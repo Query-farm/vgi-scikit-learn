@@ -38,7 +38,9 @@ class UntrustedModelError(ValueError):
 
 
 def _skops_dumps(estimator: Any) -> bytes:
-    return sio.dumps(estimator)
+    """Serialize an estimator to skops bytes."""
+    data: bytes = sio.dumps(estimator)
+    return data
 
 
 def _skops_loads(data: bytes) -> Any:
@@ -59,6 +61,7 @@ class ModelNotFoundError(KeyError):
 
 
 def validate_name(name: str) -> str:
+    """Return ``name`` unchanged if it is safe to use as a registry filename, else raise."""
     if not name or not _NAME_RE.match(name) or "/" in name or ".." in name:
         raise ModelNameError(
             f"invalid model name {name!r}: use letters, digits, '_', '-', '.' and do not start with a separator"
@@ -87,10 +90,12 @@ class ModelMetadata:
     created_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        """Render the metadata as a JSON-serializable dict."""
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ModelMetadata:
+        """Rebuild metadata from a dict, ignoring unknown keys (forward-compatible)."""
         known = {f for f in cls.__dataclass_fields__}  # noqa: C416
         return cls(**{k: v for k, v in d.items() if k in known})
 
@@ -111,10 +116,12 @@ class TransformerMetadata:
     created_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        """Render the metadata as a JSON-serializable dict."""
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> TransformerMetadata:
+        """Rebuild metadata from a dict, ignoring unknown keys (forward-compatible)."""
         known = {f for f in cls.__dataclass_fields__}  # noqa: C416
         return cls(**{k: v for k, v in d.items() if k in known})
 
@@ -123,21 +130,27 @@ class ModelStore:
     """Abstract model store. Implementations persist (estimator, metadata) by name."""
 
     def save(self, estimator: Any, meta: ModelMetadata) -> None:
+        """Persist a fitted estimator and its metadata under ``meta.name``."""
         raise NotImplementedError
 
     def load(self, name: str) -> tuple[Any, ModelMetadata]:
+        """Load both the estimator and metadata for a stored model."""
         raise NotImplementedError
 
     def load_meta(self, name: str) -> ModelMetadata:
+        """Load just the metadata for a stored model (no estimator)."""
         raise NotImplementedError
 
     def list(self) -> list[ModelMetadata]:
+        """Return metadata for every stored model."""
         raise NotImplementedError
 
     def delete(self, name: str) -> bool:
+        """Delete a model; return True if one existed."""
         raise NotImplementedError
 
     def exists(self, name: str) -> bool:
+        """Whether a model is stored under ``name``."""
         raise NotImplementedError
 
 
@@ -145,6 +158,7 @@ class LocalDiskStore(ModelStore):
     """Stores models as ``<root>/<name>.skops`` + ``<root>/<name>.json``."""
 
     def __init__(self, root: str | os.PathLike[str]) -> None:
+        """Root the store at ``root`` (created lazily on first save)."""
         self.root = Path(root)
 
     def _paths(self, name: str) -> tuple[Path, Path]:
@@ -152,24 +166,28 @@ class LocalDiskStore(ModelStore):
         return self.root / f"{name}.skops", self.root / f"{name}.json"
 
     def save(self, estimator: Any, meta: ModelMetadata) -> None:
+        """Write the skops estimator and JSON metadata sidecar to disk."""
         self.root.mkdir(parents=True, exist_ok=True)
         model_path, meta_path = self._paths(meta.name)
         model_path.write_bytes(_skops_dumps(estimator))
         meta_path.write_text(json.dumps(meta.to_dict(), indent=2, default=str))
 
     def load(self, name: str) -> tuple[Any, ModelMetadata]:
+        """Safe-load the estimator and its metadata from disk."""
         model_path, _ = self._paths(name)
         if not model_path.exists():
             raise ModelNotFoundError(name)
         return _skops_loads(model_path.read_bytes()), self.load_meta(name)
 
     def load_meta(self, name: str) -> ModelMetadata:
+        """Read the JSON metadata sidecar for a stored model."""
         _, meta_path = self._paths(name)
         if not meta_path.exists():
             raise ModelNotFoundError(name)
         return ModelMetadata.from_dict(json.loads(meta_path.read_text()))
 
     def list(self) -> list[ModelMetadata]:
+        """Read every ``*.json`` sidecar under the root, skipping unreadable ones."""
         if not self.root.exists():
             return []
         out: list[ModelMetadata] = []
@@ -181,6 +199,7 @@ class LocalDiskStore(ModelStore):
         return out
 
     def delete(self, name: str) -> bool:
+        """Remove both artifacts for a model; return True if either existed."""
         model_path, meta_path = self._paths(name)
         existed = model_path.exists() or meta_path.exists()
         model_path.unlink(missing_ok=True)
@@ -188,6 +207,7 @@ class LocalDiskStore(ModelStore):
         return existed
 
     def exists(self, name: str) -> bool:
+        """Whether the estimator artifact for ``name`` is present on disk."""
         model_path, _ = self._paths(name)
         return model_path.exists()
 
@@ -218,18 +238,23 @@ class TransformerStore:
     """Abstract store for fitted transformers (parallel to ``ModelStore``)."""
 
     def save(self, transformer: Any, meta: TransformerMetadata) -> None:
+        """Persist a fitted transformer and its metadata under ``meta.name``."""
         raise NotImplementedError
 
     def load(self, name: str) -> tuple[Any, TransformerMetadata]:
+        """Load both the transformer and metadata for a stored transformer."""
         raise NotImplementedError
 
     def load_meta(self, name: str) -> TransformerMetadata:
+        """Load just the metadata for a stored transformer (no object)."""
         raise NotImplementedError
 
     def list(self) -> list[TransformerMetadata]:
+        """Return metadata for every stored transformer."""
         raise NotImplementedError
 
     def delete(self, name: str) -> bool:
+        """Delete a transformer; return True if one existed."""
         raise NotImplementedError
 
 
@@ -241,6 +266,7 @@ class LocalTransformerStore(TransformerStore):
     """
 
     def __init__(self, root: str | os.PathLike[str]) -> None:
+        """Root the transformer store at ``<root>/transformers`` (created lazily)."""
         self.root = Path(root) / "transformers"
 
     def _paths(self, name: str) -> tuple[Path, Path]:
@@ -248,24 +274,28 @@ class LocalTransformerStore(TransformerStore):
         return self.root / f"{name}.skops", self.root / f"{name}.json"
 
     def save(self, transformer: Any, meta: TransformerMetadata) -> None:
+        """Write the skops transformer and JSON metadata sidecar to disk."""
         self.root.mkdir(parents=True, exist_ok=True)
         obj_path, meta_path = self._paths(meta.name)
         obj_path.write_bytes(_skops_dumps(transformer))
         meta_path.write_text(json.dumps(meta.to_dict(), indent=2, default=str))
 
     def load(self, name: str) -> tuple[Any, TransformerMetadata]:
+        """Safe-load the transformer and its metadata from disk."""
         obj_path, _ = self._paths(name)
         if not obj_path.exists():
             raise ModelNotFoundError(name)
         return _skops_loads(obj_path.read_bytes()), self.load_meta(name)
 
     def load_meta(self, name: str) -> TransformerMetadata:
+        """Read the JSON metadata sidecar for a stored transformer."""
         _, meta_path = self._paths(name)
         if not meta_path.exists():
             raise ModelNotFoundError(name)
         return TransformerMetadata.from_dict(json.loads(meta_path.read_text()))
 
     def list(self) -> list[TransformerMetadata]:
+        """Read every ``*.json`` sidecar under the root, skipping unreadable ones."""
         if not self.root.exists():
             return []
         out: list[TransformerMetadata] = []
@@ -277,6 +307,7 @@ class LocalTransformerStore(TransformerStore):
         return out
 
     def delete(self, name: str) -> bool:
+        """Remove both artifacts for a transformer; return True if either existed."""
         obj_path, meta_path = self._paths(name)
         existed = obj_path.exists() or meta_path.exists()
         obj_path.unlink(missing_ok=True)
@@ -303,6 +334,7 @@ def set_transformer_store(store: TransformerStore | None) -> None:
 
 
 def now_iso() -> str:
+    """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(UTC).isoformat()
 
 

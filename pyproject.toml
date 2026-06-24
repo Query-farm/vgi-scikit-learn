@@ -90,6 +90,7 @@ dev = [
     "pyarrow",
     "ruff",
     "pydoclint",
+    "mypy",
 ]
 
 [tool.pytest.ini_options]
@@ -101,14 +102,21 @@ line-length = 120
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "D"]
 ignore = [
     "E741",  # ambiguous variable name (x, y are conventional in ML)
     "B008",  # function call in argument default (Arg(...) defaults are intentional)
 ]
 
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["E402"]
+# Tests are not part of the documented public surface: skip docstring rules.
+"tests/*" = ["E402", "D"]
+
+[tool.ruff.format]
+quote-style = "double"
 
 [tool.pydoclint]
 # Docstring consistency gate (complements ruff's `D` rules, which only check
@@ -127,3 +135,15 @@ check_class_attributes = true
 skip_checking_raises = true
 # Document constructor params in the class docstring, not __init__.
 allow_init_docstring = true
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+# The scientific stack ships no (or partial) type information; don't fail on
+# missing stubs for these third-party imports.
+module = ["sklearn.*", "scipy.*", "skops.*", "joblib.*", "pandas.*"]
+ignore_missing_imports = true

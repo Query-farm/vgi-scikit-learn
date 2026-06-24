@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pyarrow as pa
 from vgi.table_buffering_function import TableBufferingFunction, TableBufferingParams
 from vgi_rpc import ArrowSerializableDataclass
@@ -29,18 +30,23 @@ class DrainState(ArrowSerializableDataclass):
 
 
 def serialize_batch(batch: pa.RecordBatch) -> bytes:
+    """Serialize one record batch to the Arrow IPC stream format."""
     sink = pa.BufferOutputStream()
-    with pa.ipc.new_stream(sink, batch.schema) as writer:
+    # pa.ipc.new_stream is untyped in pyarrow's partial stubs.
+    with pa.ipc.new_stream(sink, batch.schema) as writer:  # type: ignore[no-untyped-call]
         writer.write_batch(batch)
-    return sink.getvalue().to_pybytes()
+    return bytes(sink.getvalue().to_pybytes())
 
 
 def deserialize_batches(value: bytes) -> list[pa.RecordBatch]:
-    reader = pa.ipc.open_stream(pa.BufferReader(value))
-    return reader.read_all().to_batches()
+    """Read back the record batches from an Arrow IPC stream blob."""
+    # pa.ipc.open_stream is untyped in pyarrow's partial stubs.
+    reader = pa.ipc.open_stream(pa.BufferReader(value))  # type: ignore[no-untyped-call]
+    batches: list[pa.RecordBatch] = reader.read_all().to_batches()
+    return batches
 
 
-def matrix(table: pa.Table, feature_names: list[str], *, what: str = "feature") -> np.ndarray:
+def matrix(table: pa.Table, feature_names: list[str], *, what: str = "feature") -> npt.NDArray[np.float64]:
     """Assemble the named columns (in the given order) into a 2D float64 array.
 
     Selects ``feature_names`` by name, so input column order does not matter and
@@ -68,9 +74,9 @@ def matrix(table: pa.Table, feature_names: list[str], *, what: str = "feature") 
             + ", ".join(f"{n} ({table.schema.field(n).type})" for n in non_numeric)
             + ". Select only numeric columns, or encode/scale them first."
         )
-    cols = [np.asarray(table.column(name).to_numpy(zero_copy_only=False), dtype=float) for name in feature_names]
+    cols = [np.asarray(table.column(name).to_numpy(zero_copy_only=False), dtype=np.float64) for name in feature_names]
     if not cols:
-        return np.empty((table.num_rows, 0), dtype=float)
+        return np.empty((table.num_rows, 0), dtype=np.float64)
     return np.column_stack(cols)
 
 
@@ -83,16 +89,19 @@ class SinkBuffer[TArgs, TState](TableBufferingFunction[TArgs, TState]):
 
     @classmethod
     def process(cls, batch: pa.RecordBatch, params: TableBufferingParams[TArgs]) -> bytes:
+        """Append the (non-empty) input batch to the single buffer bucket."""
         if batch.num_rows:
             params.storage.state_append(_DATA_KEY, b"", serialize_batch(batch))
         return params.execution_id
 
     @classmethod
     def combine(cls, state_ids: list[bytes], params: TableBufferingParams[TArgs]) -> list[bytes]:
+        """Collapse partial state ids back to the single execution id."""
         return [params.execution_id]
 
     @classmethod
     def buffered_table(cls, params: TableBufferingParams[TArgs], input_schema: pa.Schema) -> pa.Table | None:
+        """Reassemble every buffered batch into the full input table, or None if empty."""
         batches: list[pa.RecordBatch] = []
         for _sid, value in params.storage.state_log_scan(_DATA_KEY, b""):
             batches.extend(deserialize_batches(value))

@@ -21,7 +21,7 @@ import pyarrow as pa
 
 def is_categorical(arrow_type: pa.DataType) -> bool:
     """Whether an Arrow column type is a (string) categorical feature."""
-    return pa.types.is_string(arrow_type) or pa.types.is_large_string(arrow_type)
+    return bool(pa.types.is_string(arrow_type) or pa.types.is_large_string(arrow_type))
 
 
 def categorical_mask(field_types: list[pa.DataType]) -> list[bool]:

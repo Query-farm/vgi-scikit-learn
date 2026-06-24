@@ -152,6 +152,7 @@ class SklearnCatalog(ReadOnlyCatalogInterface):
     catalog_name = _SKLEARN_CATALOG.name
 
     def catalogs(self) -> list[CatalogInfo]:
+        """Advertise the catalog with its implementation and data versions."""
         return [
             CatalogInfo(
                 name=self._effective_catalog_name,
@@ -163,6 +164,7 @@ class SklearnCatalog(ReadOnlyCatalogInterface):
         ]
 
     def catalog_attach(self, **kwargs: Any) -> CatalogAttachResult:
+        """Resolve the data and implementation versions reported on ATTACH."""
         result = super().catalog_attach(**kwargs)
         return dataclasses.replace(
             result,

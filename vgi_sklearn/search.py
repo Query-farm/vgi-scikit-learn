@@ -33,8 +33,9 @@ from vgi import TaggedUnion
 from vgi.arguments import Arg, TableInput
 from vgi.invocation import BindResponse
 from vgi.metadata import FunctionExample
-from vgi.table_buffering_function import OutputCollector, TableBufferingParams
+from vgi.table_buffering_function import TableBufferingParams
 from vgi.table_function import BindParams
+from vgi_rpc.rpc import OutputCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of
 from .features import PIPELINE_PARAM_PREFIX, prefix_grid, wrap_estimator
@@ -42,7 +43,7 @@ from .models import _ESTIMATORS, CLASSIFICATION, _features_excluding, _xy
 from .registry import ModelMetadata, get_store, now_iso, pack_model, validate_name
 from .schema_utils import columns_md
 from .schema_utils import field as sfield
-from .typed_models import _HPARAMS, _UNSET
+from .typed_models import _HP, _HPARAMS, _UNSET
 
 _PYTYPE_TO_ARROW: dict[type, pa.DataType] = {
     int: pa.int64(),
@@ -52,7 +53,7 @@ _PYTYPE_TO_ARROW: dict[type, pa.DataType] = {
 }
 
 
-def _member_struct(spec: list) -> pa.DataType:
+def _member_struct(spec: list[_HP]) -> pa.DataType:
     """Struct type for one estimator's grid: each hyperparameter as a list of its scalar type."""
     return pa.struct([pa.field(hp.name, pa.list_(_PYTYPE_TO_ARROW[hp.type])) for hp in spec])
 
@@ -86,6 +87,8 @@ def _param_grid(tag: str, value: dict[str, Any] | None) -> dict[str, list[Any]]:
 
 @dataclass(slots=True, frozen=True)
 class GridSearchArgs:
+    """Arguments for the grid_search function."""
+
     data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
     estimator: Annotated[
         TaggedUnion,
@@ -115,9 +118,13 @@ _SEARCH_SCHEMA = pa.schema(
 
 
 class GridSearch(SinkBuffer[GridSearchArgs, DrainState]):
+    """Cross-validated grid search over an estimator's hyperparameters."""
+
     FunctionArguments: ClassVar[type] = GridSearchArgs
 
     class Meta:
+        """VGI metadata for the grid_search function."""
+
         name = "grid_search"
         description = "Cross-validated grid search over an estimator's hyperparameters"
         categories = ["models", "supervised", "tuning"]
@@ -136,12 +143,14 @@ class GridSearch(SinkBuffer[GridSearchArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[GridSearchArgs]) -> BindResponse:
+        """Validate the estimator/target and declare the leaderboard output schema."""
         return _validate_search_bind(cls.Meta.name, params)
 
     @classmethod
     def initial_finalize_state(
         cls, finalize_state_id: bytes, params: TableBufferingParams[GridSearchArgs]
     ) -> DrainState:
+        """Start with an unfinished drain state."""
         return DrainState()
 
     @classmethod
@@ -152,6 +161,7 @@ class GridSearch(SinkBuffer[GridSearchArgs, DrainState]):
         state: DrainState,
         out: OutputCollector,
     ) -> None:
+        """Run GridSearchCV on the buffered table and emit the CV leaderboard."""
         _run_search(
             cls,
             params,
@@ -202,9 +212,9 @@ def _run_search(cls: type, params: Any, state: DrainState, out: OutputCollector,
 
     input_schema = input_schema_of(params)
     feats = _features_excluding(input_schema, a.target, a.id)
-    table = cls.buffered_table(params, input_schema)
+    table = cls.buffered_table(params, input_schema)  # type: ignore[attr-defined]  # SinkBuffer subclass
     if table is None or table.num_rows == 0:
-        raise ValueError(f"{cls.Meta.name} received no training rows")
+        raise ValueError(f"{cls.Meta.name} received no training rows")  # type: ignore[attr-defined]  # VGI function class
 
     x, y, cat_mask = _xy(table, feats, a.target, task)
     # When features are categorical the estimator becomes a one-hot Pipeline,
@@ -257,6 +267,8 @@ def _run_search(cls: type, params: Any, state: DrainState, out: OutputCollector,
 
 @dataclass(slots=True, frozen=True)
 class RandomizedSearchArgs:
+    """Arguments for the randomized_search function."""
+
     data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
     estimator: Annotated[
         TaggedUnion,
@@ -276,9 +288,13 @@ class RandomizedSearchArgs:
 
 
 class RandomizedSearch(SinkBuffer[RandomizedSearchArgs, DrainState]):
+    """Cross-validated randomized search over an estimator's hyperparameters."""
+
     FunctionArguments: ClassVar[type] = RandomizedSearchArgs
 
     class Meta:
+        """VGI metadata for the randomized_search function."""
+
         name = "randomized_search"
         description = "Cross-validated randomized search: sample n_iter hyperparameter combinations"
         categories = ["models", "supervised", "tuning"]
@@ -297,12 +313,14 @@ class RandomizedSearch(SinkBuffer[RandomizedSearchArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[RandomizedSearchArgs]) -> BindResponse:
+        """Validate the estimator/target and declare the leaderboard output schema."""
         return _validate_search_bind(cls.Meta.name, params)
 
     @classmethod
     def initial_finalize_state(
         cls, finalize_state_id: bytes, params: TableBufferingParams[RandomizedSearchArgs]
     ) -> DrainState:
+        """Start with an unfinished drain state."""
         return DrainState()
 
     @classmethod
@@ -313,6 +331,7 @@ class RandomizedSearch(SinkBuffer[RandomizedSearchArgs, DrainState]):
         state: DrainState,
         out: OutputCollector,
     ) -> None:
+        """Run RandomizedSearchCV on the buffered table and emit the CV leaderboard."""
         # n_iter can't exceed the number of distinct combinations (the grid is discrete).
         _run_search(
             cls,

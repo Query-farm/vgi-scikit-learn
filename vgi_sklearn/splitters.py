@@ -16,19 +16,30 @@ column so the result joins back to your data.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any, ClassVar
+from typing import Annotated, Any, ClassVar, Protocol
 
 import numpy as np
 import pyarrow as pa
 from vgi.arguments import Arg, TableInput
 from vgi.invocation import BindResponse
 from vgi.metadata import FunctionExample
-from vgi.table_buffering_function import OutputCollector, TableBufferingParams
+from vgi.table_buffering_function import TableBufferingParams
 from vgi.table_function import BindParams
+from vgi_rpc.rpc import OutputCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of
 from .schema_utils import columns_md_rows
 from .schema_utils import field as sfield
+
+
+class _HasId(Protocol):
+    """Splitter arguments that carry an ``id`` column name."""
+
+    @property
+    def id(self) -> str:
+        """The id column name carried onto each output row."""
+        ...
+
 
 _FOLD_MD = columns_md_rows(
     [
@@ -46,7 +57,7 @@ def _require_id(input_schema: pa.Schema, id_col: str, fn: str) -> pa.Field:
     return input_schema.field(id_col)
 
 
-class _FoldFunction[TArgs](SinkBuffer[TArgs, DrainState]):
+class _FoldFunction[TArgs: _HasId](SinkBuffer[TArgs, DrainState]):
     """Base for splitters that map each row to exactly one test fold ``(id, fold)``."""
 
     @classmethod
@@ -59,6 +70,7 @@ class _FoldFunction[TArgs](SinkBuffer[TArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[TArgs]) -> BindResponse:
+        """Require the id column and declare the (id, fold) output schema."""
         input_schema = params.bind_call.input_schema
         assert input_schema is not None
         id_field = _require_id(input_schema, params.args.id, cls.Meta.name)
@@ -105,6 +117,8 @@ class _FoldFunction[TArgs](SinkBuffer[TArgs, DrainState]):
 
 @dataclass(slots=True, frozen=True)
 class KFoldArgs:
+    """Arguments for the kfold function."""
+
     data: Annotated[TableInput, Arg(0, doc="Table to split (only the id column is used).")]
     id: Annotated[str, Arg("id", default="", doc="Column carried onto each row (required).")]
     n_splits: Annotated[int, Arg("n_splits", default=5, doc="Number of folds.")]
@@ -113,9 +127,13 @@ class KFoldArgs:
 
 
 class KFold(_FoldFunction[KFoldArgs]):
+    """Assign each row a K-fold test fold (id, fold)."""
+
     FunctionArguments: ClassVar[type] = KFoldArgs
 
     class Meta:
+        """VGI metadata for the kfold function."""
+
         name = "kfold"
         description = "Assign each row a K-fold test fold (id, fold)"
         categories = ["model-selection", "evaluation"]
@@ -132,6 +150,7 @@ class KFold(_FoldFunction[KFoldArgs]):
 
     @classmethod
     def _make_splitter(cls, args: KFoldArgs) -> Any:
+        """Build the scikit-learn KFold splitter."""
         from sklearn.model_selection import KFold as SkKFold
 
         return SkKFold(
@@ -141,6 +160,8 @@ class KFold(_FoldFunction[KFoldArgs]):
 
 @dataclass(slots=True, frozen=True)
 class StratifiedKFoldArgs:
+    """Arguments for the stratified_kfold function."""
+
     data: Annotated[TableInput, Arg(0, doc="Table to split (id + the stratify label column).")]
     id: Annotated[str, Arg("id", default="", doc="Column carried onto each row (required).")]
     label: Annotated[str, Arg("label", default="", doc="Label column to stratify on (required).")]
@@ -150,9 +171,13 @@ class StratifiedKFoldArgs:
 
 
 class StratifiedKFold(_FoldFunction[StratifiedKFoldArgs]):
+    """K-fold that preserves each class's proportion per fold (id, fold)."""
+
     FunctionArguments: ClassVar[type] = StratifiedKFoldArgs
 
     class Meta:
+        """VGI metadata for the stratified_kfold function."""
+
         name = "stratified_kfold"
         description = "K-fold that preserves each class's proportion per fold (id, fold)"
         categories = ["model-selection", "evaluation"]
@@ -169,6 +194,7 @@ class StratifiedKFold(_FoldFunction[StratifiedKFoldArgs]):
 
     @classmethod
     def on_bind(cls, params: BindParams[StratifiedKFoldArgs]) -> BindResponse:
+        """Require the stratify label column before the base (id, fold) bind."""
         a = params.args
         input_schema = params.bind_call.input_schema
         assert input_schema is not None
@@ -192,6 +218,8 @@ class StratifiedKFold(_FoldFunction[StratifiedKFoldArgs]):
 
 @dataclass(slots=True, frozen=True)
 class GroupKFoldArgs:
+    """Arguments for the group_kfold function."""
+
     data: Annotated[TableInput, Arg(0, doc="Table to split (id + the group column).")]
     id: Annotated[str, Arg("id", default="", doc="Column carried onto each row (required).")]
     # Named 'group_col' rather than 'group' because `group :=` collides with the SQL GROUP keyword.
@@ -202,9 +230,13 @@ class GroupKFoldArgs:
 
 
 class GroupKFold(_FoldFunction[GroupKFoldArgs]):
+    """K-fold that keeps all rows of a group in the same fold (id, fold)."""
+
     FunctionArguments: ClassVar[type] = GroupKFoldArgs
 
     class Meta:
+        """VGI metadata for the group_kfold function."""
+
         name = "group_kfold"
         description = "K-fold that keeps all rows of a group in the same fold (id, fold)"
         categories = ["model-selection", "evaluation"]
@@ -221,6 +253,7 @@ class GroupKFold(_FoldFunction[GroupKFoldArgs]):
 
     @classmethod
     def on_bind(cls, params: BindParams[GroupKFoldArgs]) -> BindResponse:
+        """Require the group column before the base (id, fold) bind."""
         a = params.args
         input_schema = params.bind_call.input_schema
         assert input_schema is not None
@@ -241,15 +274,21 @@ class GroupKFold(_FoldFunction[GroupKFoldArgs]):
 
 @dataclass(slots=True, frozen=True)
 class TimeSeriesSplitArgs:
+    """Arguments for the timeseries_split function."""
+
     data: Annotated[TableInput, Arg(0, doc="Table to split, in time order (only the id column is used).")]
     id: Annotated[str, Arg("id", default="", doc="Column carried onto each row (required).")]
     n_splits: Annotated[int, Arg("n_splits", default=5, doc="Number of expanding-window splits.")]
 
 
 class TimeSeriesSplit(SinkBuffer[TimeSeriesSplitArgs, DrainState]):
+    """Expanding-window splits for ordered data: (split, id, role) long format."""
+
     FunctionArguments: ClassVar[type] = TimeSeriesSplitArgs
 
     class Meta:
+        """VGI metadata for the timeseries_split function."""
+
         name = "timeseries_split"
         description = "Expanding-window splits for ordered data: (split, id, role) in {train, test}"
         categories = ["model-selection", "evaluation"]
@@ -274,6 +313,7 @@ class TimeSeriesSplit(SinkBuffer[TimeSeriesSplitArgs, DrainState]):
 
     @classmethod
     def on_bind(cls, params: BindParams[TimeSeriesSplitArgs]) -> BindResponse:
+        """Require the id column and declare the (split, id, role) output schema."""
         input_schema = params.bind_call.input_schema
         assert input_schema is not None
         id_field = _require_id(input_schema, params.args.id, cls.Meta.name)
@@ -291,6 +331,7 @@ class TimeSeriesSplit(SinkBuffer[TimeSeriesSplitArgs, DrainState]):
     def initial_finalize_state(
         cls, finalize_state_id: bytes, params: TableBufferingParams[TimeSeriesSplitArgs]
     ) -> DrainState:
+        """Start with an unfinished drain state."""
         return DrainState()
 
     @classmethod
@@ -301,6 +342,7 @@ class TimeSeriesSplit(SinkBuffer[TimeSeriesSplitArgs, DrainState]):
         state: DrainState,
         out: OutputCollector,
     ) -> None:
+        """Emit each split's train/test row assignments over the buffered table."""
         if state.done:
             out.finish()
             return

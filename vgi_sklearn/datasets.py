@@ -54,7 +54,7 @@ def _feature_fields(labels: list[str]) -> list[pa.Field]:
 
 
 def _classification_schema(labels: list[str], target_names: list[str]) -> pa.Schema:
-    """id + float features + integer target + human-readable target name."""
+    """Build id + float features + integer target + human-readable target name schema."""
     fields = [field("sample_id", pa.int32(), "Row index within the dataset (0-based).", nullable=False)]
     fields.extend(_feature_fields(labels))
     fields.append(field("target", pa.int32(), "Integer class label.", nullable=False))
@@ -70,7 +70,7 @@ def _classification_schema(labels: list[str], target_names: list[str]) -> pa.Sch
 
 
 def _regression_schema(labels: list[str]) -> pa.Schema:
-    """id + float features + continuous float target."""
+    """Build id + float features + continuous float target schema."""
     fields = [field("sample_id", pa.int32(), "Row index within the dataset (0-based).", nullable=False)]
     fields.extend(_feature_fields(labels))
     fields.append(field("target", pa.float64(), "Continuous regression target.", nullable=False))
@@ -78,6 +78,7 @@ def _regression_schema(labels: list[str]) -> pa.Schema:
 
 
 def _synthetic_schema(n_features: int, target_col: str, target_type: pa.DataType, target_doc: str) -> pa.Schema:
+    """Build id + float features + one named target column schema for a generator."""
     fields = [field("sample_id", pa.int32(), "Row index within the generated sample (0-based).", nullable=False)]
     fields.extend(_feature_fields([f"feature_{i}" for i in range(n_features)]))
     fields.append(field(target_col, target_type, target_doc, nullable=False))
@@ -112,16 +113,20 @@ class _ToyDataset(TableFunctionGenerator[NoArgs]):
 
     BUNCH: ClassVar[Any]
     REGRESSION: ClassVar[bool] = False
+    FIXED_SCHEMA: ClassVar[pa.Schema]
 
     @classmethod
     def cardinality(cls, params: BindParams[NoArgs]) -> TableCardinality:
+        """Estimate row count as the dataset size (exact for toy bunches)."""
         n = int(cls.BUNCH.data.shape[0])
         return TableCardinality(estimate=n, max=n)
 
     @classmethod
     def process(cls, params: ProcessParams[NoArgs], state: None, out: OutputCollector) -> None:
+        """Emit the toy dataset matrix plus its target (+ class name) columns."""
         bunch = cls.BUNCH
         target = bunch.target
+        targets: dict[str, list[Any]]
         if cls.REGRESSION:
             targets = {"target": [float(t) for t in target]}
         else:
@@ -161,6 +166,8 @@ class IrisFunction(_ToyDataset):
     FIXED_SCHEMA: ClassVar[pa.Schema] = _IRIS_SCHEMA
 
     class Meta:
+        """VGI metadata for the iris dataset function."""
+
         name = "iris"
         description = "Fisher's iris dataset (150 samples, 4 features, 3 species)"
         categories = ["datasets", "classification"]
@@ -184,6 +191,8 @@ class WineFunction(_ToyDataset):
     FIXED_SCHEMA: ClassVar[pa.Schema] = _WINE_SCHEMA
 
     class Meta:
+        """VGI metadata for the wine dataset function."""
+
         name = "wine"
         description = "Wine recognition dataset (178 samples, 13 features, 3 classes)"
         categories = ["datasets", "classification"]
@@ -201,6 +210,8 @@ class DigitsFunction(_ToyDataset):
     FIXED_SCHEMA: ClassVar[pa.Schema] = _DIGITS_SCHEMA
 
     class Meta:
+        """VGI metadata for the digits dataset function."""
+
         name = "digits"
         description = "Handwritten digits (1797 samples, 64 pixel features, 10 classes)"
         categories = ["datasets", "classification"]
@@ -218,6 +229,8 @@ class BreastCancerFunction(_ToyDataset):
     FIXED_SCHEMA: ClassVar[pa.Schema] = _CANCER_SCHEMA
 
     class Meta:
+        """VGI metadata for the breast cancer dataset function."""
+
         name = "breast_cancer"
         description = "Breast cancer Wisconsin diagnostic (569 samples, 30 features, 2 classes)"
         categories = ["datasets", "classification"]
@@ -245,6 +258,8 @@ class CaliforniaHousingFunction(TableFunctionGenerator[NoArgs]):
     FIXED_SCHEMA: ClassVar[pa.Schema] = _CALIFORNIA_SCHEMA
 
     class Meta:
+        """VGI metadata for the California housing dataset function."""
+
         name = "california_housing"
         description = "California housing prices (20640 districts, 8 features, regression)"
         categories = ["datasets", "regression", "fetched"]
@@ -259,10 +274,12 @@ class CaliforniaHousingFunction(TableFunctionGenerator[NoArgs]):
 
     @classmethod
     def cardinality(cls, params: BindParams[NoArgs]) -> TableCardinality:
+        """Report the fixed California housing row count."""
         return TableCardinality(estimate=20640, max=20640)
 
     @classmethod
     def process(cls, params: ProcessParams[NoArgs], state: None, out: OutputCollector) -> None:
+        """Fetch (and cache) the dataset and emit it as one batch."""
         bunch = skd.fetch_california_housing()
         _emit_matrix(
             bunch.data, {"target": [float(t) for t in bunch.target]}, cls.FIXED_SCHEMA, out, params.output_schema
@@ -279,6 +296,8 @@ class DiabetesFunction(_ToyDataset):
     FIXED_SCHEMA: ClassVar[pa.Schema] = _DIABETES_SCHEMA
 
     class Meta:
+        """VGI metadata for the diabetes dataset function."""
+
         name = "diabetes"
         description = "Diabetes progression regression (442 samples, 10 features)"
         categories = ["datasets", "regression"]
@@ -294,6 +313,8 @@ class DiabetesFunction(_ToyDataset):
 
 @dataclass(slots=True, frozen=True)
 class MakeClassificationArgs:
+    """Arguments for the make_classification generator."""
+
     n_samples: Annotated[int, Arg("n_samples", default=100, doc="Number of samples to generate.")]
     n_features: Annotated[int, Arg("n_features", default=20, doc="Total number of features.")]
     n_informative: Annotated[int, Arg("n_informative", default=2, doc="Number of informative features.")]
@@ -306,6 +327,8 @@ class MakeClassificationFunction(TableFunctionGenerator[MakeClassificationArgs])
     """Generate a random n-class classification problem."""
 
     class Meta:
+        """VGI metadata for the make_classification generator."""
+
         name = "make_classification"
         description = "Generate a synthetic classification dataset"
         categories = ["datasets", "synthetic", "classification"]
@@ -328,17 +351,20 @@ class MakeClassificationFunction(TableFunctionGenerator[MakeClassificationArgs])
 
     @classmethod
     def on_bind(cls, params: BindParams[MakeClassificationArgs]) -> BindResponse:
+        """Build the output schema from the requested feature count."""
         return BindResponse(
             output_schema=_synthetic_schema(params.args.n_features, "target", pa.int32(), "Integer class label.")
         )
 
     @classmethod
     def cardinality(cls, params: BindParams[MakeClassificationArgs]) -> TableCardinality:
+        """Report the requested sample count as the exact row count."""
         n = params.args.n_samples
         return TableCardinality(estimate=n, max=n)
 
     @classmethod
     def process(cls, params: ProcessParams[MakeClassificationArgs], state: None, out: OutputCollector) -> None:
+        """Generate the classification dataset and emit it as one batch."""
         a = params.args
         # sklearn requires n_classes * n_clusters_per_class <= 2**n_informative.
         # Use one cluster per class and raise n_informative just enough (capped
@@ -359,6 +385,8 @@ class MakeClassificationFunction(TableFunctionGenerator[MakeClassificationArgs])
 
 @dataclass(slots=True, frozen=True)
 class MakeRegressionArgs:
+    """Arguments for the make_regression generator."""
+
     n_samples: Annotated[int, Arg("n_samples", default=100, doc="Number of samples to generate.")]
     n_features: Annotated[int, Arg("n_features", default=20, doc="Total number of features.")]
     n_informative: Annotated[int, Arg("n_informative", default=10, doc="Number of informative features.")]
@@ -371,6 +399,8 @@ class MakeRegressionFunction(TableFunctionGenerator[MakeRegressionArgs]):
     """Generate a random regression problem."""
 
     class Meta:
+        """VGI metadata for the make_regression generator."""
+
         name = "make_regression"
         description = "Generate a synthetic regression dataset"
         categories = ["datasets", "synthetic", "regression"]
@@ -393,6 +423,7 @@ class MakeRegressionFunction(TableFunctionGenerator[MakeRegressionArgs]):
 
     @classmethod
     def on_bind(cls, params: BindParams[MakeRegressionArgs]) -> BindResponse:
+        """Build the output schema from the requested feature count."""
         return BindResponse(
             output_schema=_synthetic_schema(
                 params.args.n_features, "target", pa.float64(), "Continuous regression target."
@@ -401,11 +432,13 @@ class MakeRegressionFunction(TableFunctionGenerator[MakeRegressionArgs]):
 
     @classmethod
     def cardinality(cls, params: BindParams[MakeRegressionArgs]) -> TableCardinality:
+        """Report the requested sample count as the exact row count."""
         n = params.args.n_samples
         return TableCardinality(estimate=n, max=n)
 
     @classmethod
     def process(cls, params: ProcessParams[MakeRegressionArgs], state: None, out: OutputCollector) -> None:
+        """Generate the regression dataset and emit it as one batch."""
         a = params.args
         x, y = skd.make_regression(
             n_samples=a.n_samples,
@@ -419,6 +452,8 @@ class MakeRegressionFunction(TableFunctionGenerator[MakeRegressionArgs]):
 
 @dataclass(slots=True, frozen=True)
 class MakeBlobsArgs:
+    """Arguments for the make_blobs generator."""
+
     n_samples: Annotated[int, Arg("n_samples", default=100, doc="Number of samples to generate.")]
     n_features: Annotated[int, Arg("n_features", default=2, doc="Number of features per sample.")]
     centers: Annotated[int, Arg("centers", default=3, doc="Number of cluster centers.")]
@@ -431,6 +466,8 @@ class MakeBlobsFunction(TableFunctionGenerator[MakeBlobsArgs]):
     """Generate isotropic Gaussian blobs for clustering."""
 
     class Meta:
+        """VGI metadata for the make_blobs generator."""
+
         name = "make_blobs"
         description = "Generate Gaussian blobs for clustering"
         categories = ["datasets", "synthetic", "clustering"]
@@ -453,6 +490,7 @@ class MakeBlobsFunction(TableFunctionGenerator[MakeBlobsArgs]):
 
     @classmethod
     def on_bind(cls, params: BindParams[MakeBlobsArgs]) -> BindResponse:
+        """Build the output schema from the requested feature count."""
         return BindResponse(
             output_schema=_synthetic_schema(
                 params.args.n_features, "cluster", pa.int32(), "Ground-truth cluster index."
@@ -461,11 +499,13 @@ class MakeBlobsFunction(TableFunctionGenerator[MakeBlobsArgs]):
 
     @classmethod
     def cardinality(cls, params: BindParams[MakeBlobsArgs]) -> TableCardinality:
+        """Report the requested sample count as the exact row count."""
         n = params.args.n_samples
         return TableCardinality(estimate=n, max=n)
 
     @classmethod
     def process(cls, params: ProcessParams[MakeBlobsArgs], state: None, out: OutputCollector) -> None:
+        """Generate the Gaussian blobs and emit them as one batch."""
         a = params.args
         x, y = skd.make_blobs(
             n_samples=a.n_samples,
@@ -479,6 +519,8 @@ class MakeBlobsFunction(TableFunctionGenerator[MakeBlobsArgs]):
 
 @dataclass(slots=True, frozen=True)
 class TwoFeatureArgs:
+    """Arguments for the 2-feature binary toy shapes (moons, circles)."""
+
     n_samples: Annotated[int, Arg("n_samples", default=100, doc="Number of samples to generate.")]
     noise: Annotated[float, Arg("noise", default=0.1, doc="Std-dev of gaussian noise added to the data.")]
     random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed for reproducibility.")]
@@ -489,10 +531,12 @@ class _TwoFeatureShape(TableFunctionGenerator[TwoFeatureArgs]):
 
     @classmethod
     def on_bind(cls, params: BindParams[TwoFeatureArgs]) -> BindResponse:
+        """Build the fixed 2-feature binary output schema."""
         return BindResponse(output_schema=_synthetic_schema(2, "target", pa.int32(), "Binary class label (0 or 1)."))
 
     @classmethod
     def cardinality(cls, params: BindParams[TwoFeatureArgs]) -> TableCardinality:
+        """Report the requested sample count as the exact row count."""
         n = params.args.n_samples
         return TableCardinality(estimate=n, max=n)
 
@@ -502,6 +546,8 @@ class MakeMoonsFunction(_TwoFeatureShape):
     """Generate two interleaving half-circles (the classic 'moons')."""
 
     class Meta:
+        """VGI metadata for the make_moons generator."""
+
         name = "make_moons"
         description = "Generate two interleaving half-moons (2 features, binary)"
         categories = ["datasets", "synthetic", "classification"]
@@ -518,6 +564,7 @@ class MakeMoonsFunction(_TwoFeatureShape):
 
     @classmethod
     def process(cls, params: ProcessParams[TwoFeatureArgs], state: None, out: OutputCollector) -> None:
+        """Generate the two-moons shape and emit it as one batch."""
         a = params.args
         x, y = skd.make_moons(n_samples=a.n_samples, noise=a.noise, random_state=a.random_state)
         _emit_matrix(x, {"target": [int(v) for v in y]}, params.output_schema, out, params.output_schema)
@@ -528,6 +575,8 @@ class MakeCirclesFunction(_TwoFeatureShape):
     """Generate a large circle containing a smaller circle in 2D."""
 
     class Meta:
+        """VGI metadata for the make_circles generator."""
+
         name = "make_circles"
         description = "Generate two concentric circles (2 features, binary)"
         categories = ["datasets", "synthetic", "classification"]
@@ -544,6 +593,7 @@ class MakeCirclesFunction(_TwoFeatureShape):
 
     @classmethod
     def process(cls, params: ProcessParams[TwoFeatureArgs], state: None, out: OutputCollector) -> None:
+        """Generate the two concentric circles and emit them as one batch."""
         a = params.args
         x, y = skd.make_circles(n_samples=a.n_samples, noise=a.noise, random_state=a.random_state)
         _emit_matrix(x, {"target": [int(v) for v in y]}, params.output_schema, out, params.output_schema)
