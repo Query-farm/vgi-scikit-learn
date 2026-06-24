@@ -45,7 +45,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name || 'vgi-sklearn' }}
+  # Image name only; the full ref (with the owner lowercased — ghcr requires it)
+  # is resolved per job into $IMAGE, since Actions expressions can't lowercase.
+  IMAGE_NAME: ${{ inputs.image_name || 'vgi-sklearn' }}
 
 jobs:
   # Gate every image on the full unit + vgi-extension integration suite (same
@@ -72,6 +74,9 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v6
+
+      - name: Resolve image ref (owner lowercased)
+        run: echo "IMAGE=ghcr.io/$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')/$IMAGE_NAME" >> "$GITHUB_ENV"
 
       # Fail fast on a version tag that doesn't match the package version, so the
       # image's advertised implementation_version always equals the tag.
@@ -190,6 +195,9 @@ jobs:
       packages: write
       id-token: write
     steps:
+      - name: Resolve image ref (owner lowercased)
+        run: echo "IMAGE=ghcr.io/$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')/$IMAGE_NAME" >> "$GITHUB_ENV"
+
       - name: Download digests
         uses: actions/download-artifact@v4
         with:
