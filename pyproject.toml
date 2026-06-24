@@ -1,6 +1,10 @@
 [project]
 name = "vgi-sklearn"
-version = "0.1.0"
+# Single-sourced from vgi_sklearn/__init__.py (see [tool.hatch.version]) so the
+# published wheel, the version the worker advertises over VGI
+# (implementation_version / data_version), and the GitHub Release tag are always
+# the same number. Bump __version__ there before tagging a release.
+dynamic = ["version"]
 description = "A VGI (Vector Gateway Interface) worker exposing scikit-learn datasets, metrics, transforms, and a train/predict model registry to DuckDB/SQL"
 readme = "README.md"
 license = "MIT"
@@ -27,6 +31,17 @@ dependencies = [
     "skops>=0.11",
 ]
 
+[project.optional-dependencies]
+# HTTP-serving extras. Sentry telemetry and OAuth auth only apply to the HTTP
+# server (under stdio, DuckDB owns the pipe), so they live here rather than in
+# the base deps: the published Docker image installs `.[serve]`, while a plain
+# `pip install vgi-sklearn` for an on-host stdio worker stays lean.
+serve = [
+    "vgi-python[http,oauth]>=0.8.3",
+    "vgi-rpc[sentry]",
+    "authlib",
+]
+
 # Console scripts. `vgi-sklearn` runs the stdio transport (DuckDB spawns it);
 # `vgi-sklearn-http` runs the HTTP server. Once installed you can launch either
 # directly, e.g. `uvx vgi-sklearn`.
@@ -42,6 +57,11 @@ Issues = "https://github.com/Query-farm/vgi-scikit-learn/issues"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# Read the package version from the `__version__` literal in the package itself,
+# so it is the single source of truth (see [project].dynamic above).
+[tool.hatch.version]
+path = "vgi_sklearn/__init__.py"
 
 # The installable worker is the `vgi_sklearn` package (entry points live in
 # vgi_sklearn.worker). The repo-root sklearn_worker.py / serve.py are dev/Fly

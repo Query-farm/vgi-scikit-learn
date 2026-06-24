@@ -8,6 +8,9 @@ primary_region = 'iad'
   # Local-disk model registry; backed by the mounted volume below so models
   # survive machine restarts. Swap for S3/R2 config in a later phase.
   SKLEARN_MODELS_DIR = '/data/models'
+  # Shared BoundStorage (WAL SQLite) on the same persistent volume, so framework
+  # state also survives restarts. (Defaults are baked into the image too.)
+  VGI_WORKER_SQLITE_PATH = '/data/state/vgi_storage.db'
 
 # Persistent storage for the model registry. Create with:
 #   fly volumes create sklearn_models --size 1 --region iad

@@ -166,16 +166,16 @@ arg, while `fit_<estimator>` exposes them as typed named args.
 7. **HTTP entry point:** current vgi-python has **no `main_http`**. Serve HTTP
    via `Worker.main()` with `--http`; `serve.py` injects that flag.
 8. **Distribution rename:** the package is dist `vgi-python` (import `vgi`).
-   PEP 723 headers use `vgi-python = { path = ... }`; the Docker wheel glob is
-   `vgi_python-*.whl`. The older `vgi`-based assumptions from vgi-trains break.
+   PEP 723 headers use `vgi-python = { path = ... }`. The older `vgi`-based
+   assumptions from vgi-trains break. (The container no longer builds vendored
+   wheels — it `pip install`s from PyPI — so the old `vgi_python-*.whl` glob and
+   the `sed` pin-rewrite in the Dockerfile are gone.)
 9. **Local source skew (local-checkout dev only):** the packaged/CI/PyPI path
-   is clean — `vgi-python` 0.8.1 and `vgi-rpc` 0.20.4 are both on PyPI, so
-   `pyproject.toml` / `uv.lock` resolve without any override. The skew only bites
-   when building against the *local* `~/Development/vgi-rpc` checkout (0.20.3),
-   which lags vgi-python's `>=0.20.4` pin: worked around with
-   `override-dependencies` in the PEP 723 headers, `--override` in `make venv`,
-   and a `sed` in the Dockerfile. Bumping the local `vgi-rpc` checkout to ≥0.20.4
-   would let those be removed.
+   is clean — `vgi-python`/`vgi-rpc` are on PyPI, so `pyproject.toml` / `uv.lock`
+   resolve without any override, and the **container builds straight from PyPI**.
+   The skew only bites local `make venv` dev against `~/Development/vgi-rpc` when
+   it lags vgi-python's pin: worked around with `override-dependencies` in the
+   PEP 723 headers and `--override` in `make venv`. (No longer a Docker concern.)
 10. **A table function gets at most ONE subquery parameter.** That slot is the
     table input `(SELECT ...)`. You cannot also pass `model := (SELECT model
     FROM ...)` — DuckDB errors "Table function can have at most one subquery
@@ -229,8 +229,28 @@ ruff (`uvx ruff check .` / `ruff format`); config in `pyproject.toml`. GitHub
 Actions (`.github/workflows/ci.yml` + `ci/`) runs the unit + SQL suites on
 Linux/macOS/Windows against the **signed community `vgi` extension** via a
 prebuilt `haybarn-unittest` — no C++ build (mirrors `vgi-easter`; see
-`ci/README.md`). Keep PyPI deps in `pyproject.toml` in sync with the PEP 723
-headers and the Dockerfile `pip install` line when adding a dependency.
+`ci/README.md`). HTTP-only extras (Sentry/OAuth/authlib) live in the `serve`
+optional-dependency group, not the base deps; the image installs `.[serve]`
+while a plain `pip install` (stdio host) stays lean. Keep PyPI deps in
+`pyproject.toml` in sync with the PEP 723 headers when adding a dependency.
+
+- **Version is single-sourced** from `__version__` in `vgi_sklearn/__init__.py`
+  (`pyproject.toml` is `dynamic = ["version"]` via `[tool.hatch.version]`). It's
+  what the worker advertises over VGI as **`implementation_version`** (a semver,
+  per the protocol — *not* the git sha, which only feeds Sentry/provenance) and
+  `data_version`. Bump it before tagging; `ci/check-version.sh` (run by both
+  release jobs) fails the release if the tag doesn't match.
+- **Container image → ghcr.io** (`.github/workflows/docker-publish.yml`): one
+  multi-arch (`amd64`+`arm64`) image serving both transports (`http` default,
+  `stdio` arg via `docker-entrypoint.sh`). **Tag-driven** (`vX.Y.Z` → versioned
+  tags; `main` → `:edge`) and deliberately decoupled from the PyPI publish (which
+  is `release`-driven in `publish.yml`), so an image can ship without a PyPI
+  release. Built per-arch on native runners,
+  **tested in both modes before push** (amd64 runs the full SQL suite via
+  `ci/run-integration.sh` against the container; arm64 has no haybarn asset so it
+  gets a `/health`+import smoke), merged to one manifest, cosign-signed with
+  provenance+SBOM. The Dockerfile installs from PyPI (`pip install .[serve]`) —
+  the old vendored `vendor/` + `sed` build is gone.
 
 ## Testing
 
@@ -257,14 +277,17 @@ make test-http                       # SQL tests against a local HTTP server
 ## Deployment (Fly.io)
 
 ```sh
-make vendor-sync   # rsync vgi-python/vgi-rpc into vendor/ for the Docker build
-make deploy        # build (linux/amd64) -> smoke-test -> push -> fly deploy
+make deploy        # fly deploy --image ghcr.io/query-farm/vgi-sklearn:<version>
 fly volumes create sklearn_models --size 1 --region iad   # one-time, registry
 ```
 
-`fly.toml` bumps VM memory to 1gb (scikit-learn/scipy are heavy) and mounts a
-volume at `/data` for the model registry (`SKLEARN_MODELS_DIR=/data/models`).
-The Docker smoke test verifies imports + `/health`.
+Fly now **pulls the CI-published ghcr image** (no local build). `make deploy`
+defaults `TAG` to the package version; override `TAG=edge` etc. `fly.toml` bumps
+VM memory to 1gb (scikit-learn/scipy are heavy) and mounts a volume at `/data`
+holding both the model registry (`SKLEARN_MODELS_DIR=/data/models`) and the
+shared `BoundStorage` SQLite (`VGI_WORKER_SQLITE_PATH=/data/state/...`). For a
+local image check use `make image` + `make smoke-test`; `make test-docker-stdio`
+/ `test-docker-http` run the full SQL suite against the built image in each mode.
 
 ## Model registry
 

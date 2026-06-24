@@ -572,6 +572,30 @@ This provides the `vgi-sklearn` (stdio, for DuckDB to spawn) and
 'vgi-sklearn')`. To attach a hosted HTTP deployment instead:
 `ATTACH 'sklearn' (TYPE vgi, LOCATION 'https://<host>')`.
 
+## Run via Docker
+
+A multi-arch image (`linux/amd64` + `linux/arm64`) is published to
+`ghcr.io/query-farm/vgi-sklearn` by CI on every version tag `vX.Y.Z` (and
+`:edge` from `main`). One image serves **both** transports — `http` is the
+default; pass `stdio` to run the worker DuckDB spawns on-host:
+
+```sh
+# HTTP server on :8000 (mount a volume for the model registry + shared state)
+docker run -p 8000:8000 -v vgi_sklearn_state:/data ghcr.io/query-farm/vgi-sklearn
+
+# stdio worker for DuckDB to spawn on-host
+ATTACH 'sklearn' (TYPE vgi, LOCATION
+  'docker run -i --rm -v vgi_sklearn_state:/data ghcr.io/query-farm/vgi-sklearn stdio');
+```
+
+The image declares the state mount it needs via the `farm.query.vgi.volumes`
+label, so a VGI extension can discover and inject the `-v` mount automatically.
+`/data` holds the model registry (`/data/models`) and the shared `BoundStorage`
+SQLite (`/data/state`); mounting one named volume across instances shares both.
+On macOS/Windows there is no Docker host runtime for those OSes — install the
+cross-platform PyPI package instead (above). Images are cosign-signed (keyless)
+with provenance + SBOM attestations.
+
 ## Local development
 
 ```sh
@@ -597,10 +621,24 @@ via a prebuilt `haybarn-unittest` — no local C++ build (see
 
 ## Publishing
 
-Releases publish to PyPI via [`.github/workflows/publish.yml`](.github/workflows/publish.yml):
-publishing a GitHub Release runs the full CI suite, then `uv build && uv publish`
-(token in the `PYPI_API_TOKEN` repo secret). Bump `version` in `pyproject.toml`
-before tagging.
+The two artifacts publish independently, gated on the full CI suite:
+
+- **ghcr.io image** ([`docker-publish.yml`](.github/workflows/docker-publish.yml))
+  — on a **version tag push** (`vX.Y.Z`): multi-arch, built per-arch on native
+  runners, tested in both transports before push, merged into one manifest, and
+  cosign-signed. (Pushes to `main` publish `:edge`.)
+- **PyPI** ([`publish.yml`](.github/workflows/publish.yml)) — on a **GitHub
+  Release**: `uv build && uv publish` (token in the `PYPI_API_TOKEN` repo
+  secret). Publishing a Release also creates the tag, so it ships the image too.
+
+So you can cut a Docker-only release (push a tag) without touching PyPI.
+
+The version is single-sourced from `__version__` in
+[`vgi_sklearn/__init__.py`](vgi_sklearn/__init__.py) (hatchling reads it; the
+worker advertises it as `implementation_version`). **Bump it there before
+tagging** — both release jobs verify the release tag matches it
+([`ci/check-version.sh`](ci/check-version.sh)), so the PyPI wheel, the image
+tag, and the version the worker reports over VGI always agree.
 
 ## License
 

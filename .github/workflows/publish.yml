@@ -29,6 +29,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
+      - name: Verify release tag matches package version
+        if: github.event_name == 'release'
+        run: ci/check-version.sh "${{ github.event.release.tag_name }}"
       - name: Build wheel and sdist
         run: uv build
       - name: Publish to PyPI

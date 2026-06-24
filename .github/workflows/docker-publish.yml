@@ -1,0 +1,240 @@
+# Copyright 2026 Query Farm LLC - https://query.farm
+#
+# Build and publish the multi-arch (linux/amd64 + linux/arm64) container image to
+# ghcr.io. The single image serves both transports (HTTP default, `stdio` arg).
+#
+# Each architecture is built on a NATIVE runner, the built image is exercised in
+# both modes BEFORE it is pushed (amd64 runs the full SQL suite via the signed
+# vgi extension; arm64 — which has no haybarn-unittest asset — runs a /health +
+# import smoke), then pushed by digest. A merge job assembles the per-arch digests
+# into one manifest under the release/edge tags and cosign-signs it (keyless).
+#
+# Triggers: a version tag push `vX.Y.Z` (-> :X.Y.Z, :X.Y, :latest), push to main
+# (-> :edge), manual, and workflow_call so other VGI workers can reuse this as a
+# standard baseline. Deliberately tag-driven, NOT release-driven, so an image can
+# ship independently of a PyPI publish (which stays on the GitHub Release event in
+# publish.yml). Publishing a GitHub Release creates the tag, which fires this too.
+name: Publish image to ghcr.io
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      image_name:
+        description: Image name under ghcr.io/<owner>/
+        type: string
+        default: vgi-sklearn
+      context:
+        type: string
+        default: .
+      dockerfile:
+        type: string
+        default: Dockerfile
+      platforms:
+        type: string
+        default: linux/amd64,linux/arm64
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name || 'vgi-sklearn' }}
+
+jobs:
+  # Gate every image on the full unit + vgi-extension integration suite (same
+  # reusable workflow the PyPI publish uses), so a broken worker is never imaged.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: [ci]
+    permissions:
+      contents: read
+      packages: write          # push to ghcr
+      id-token: write          # keyless signing / provenance
+      attestations: write      # provenance + SBOM attestations
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04,     platform: linux/amd64, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, platform: linux/arm64, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+
+      # Fail fast on a version tag that doesn't match the package version, so the
+      # image's advertised implementation_version always equals the tag.
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: ci/check-version.sh "${{ github.ref_name }}"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+
+      # 1) Build the single-arch image and load it locally so we can test it.
+      - name: Build (load for testing)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context || '.' }}
+          file: ${{ inputs.dockerfile || 'Dockerfile' }}
+          platforms: ${{ matrix.platform }}
+          load: true
+          tags: ${{ env.IMAGE }}:citest-${{ matrix.arch }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            GIT_COMMIT=${{ github.sha }}
+
+      # 2a) amd64: run the authoritative SQL suite against the image, both modes.
+      - name: Download haybarn-unittest (amd64)
+        if: matrix.arch == 'amd64'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          REL=$(gh release view --repo Query-farm-haybarn/haybarn --json tagName --jq .tagName)
+          gh release download "$REL" --repo Query-farm-haybarn/haybarn \
+            --pattern 'haybarn_unittest-linux-amd64.zip' --output hb.zip --clobber
+          mkdir -p hb && unzip -o -q hb.zip -d hb
+          BIN="$PWD/$(find hb -name 'haybarn-unittest' -type f | head -1)"
+          chmod +x "$BIN"
+          echo "HAYBARN_UNITTEST=$BIN" >> "$GITHUB_ENV"
+
+      - name: Test image — stdio transport (amd64)
+        if: matrix.arch == 'amd64'
+        run: |
+          docker volume rm vgi_sklearn_state_ci >/dev/null 2>&1 || true
+          VGI_SKLEARN_WORKER="docker run -i --rm -v vgi_sklearn_state_ci:/data ${IMAGE}:citest-amd64 stdio" \
+            ci/run-integration.sh
+          docker volume rm vgi_sklearn_state_ci >/dev/null 2>&1 || true
+
+      - name: Test image — HTTP transport (amd64)
+        if: matrix.arch == 'amd64'
+        run: |
+          docker volume rm vgi_sklearn_state_ci >/dev/null 2>&1 || true
+          CID=$(docker run -d -p 8000:8000 -v vgi_sklearn_state_ci:/data \
+                  -e VGI_SIGNING_KEY=dev "${IMAGE}:citest-amd64")
+          trap 'docker rm -f "$CID" >/dev/null 2>&1; docker volume rm vgi_sklearn_state_ci >/dev/null 2>&1' EXIT
+          for _ in $(seq 1 30); do curl -fsS -o /dev/null http://localhost:8000/health && break; sleep 1; done
+          VGI_SKLEARN_WORKER="http://localhost:8000" ci/run-integration.sh
+
+      # 2b) arm64: no haybarn-unittest asset exists for linux/arm64, so run a
+      # native smoke (import + /health) instead of the full SQL suite.
+      - name: Smoke test image (arm64)
+        if: matrix.arch == 'arm64'
+        run: |
+          docker run --rm --entrypoint python "${IMAGE}:citest-arm64" \
+            -c "import vgi_sklearn, sklearn, numpy, scipy; print('import OK', vgi_sklearn.__version__)"
+          CID=$(docker run -d -p 8000:8000 -e VGI_SIGNING_KEY=dev "${IMAGE}:citest-arm64")
+          trap 'docker rm -f "$CID" >/dev/null 2>&1' EXIT
+          ok=
+          for _ in $(seq 1 30); do curl -fsS -o /dev/null http://localhost:8000/health && { ok=1; break; }; sleep 1; done
+          [ "$ok" = 1 ] || { echo "::error::arm64 image failed /health"; docker logs "$CID"; exit 1; }
+
+      # 3) Tests passed -> push the image BY DIGEST (no tags yet) with provenance
+      # + SBOM attestations. The merge job applies the human-facing tags.
+      - name: Push by digest
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context || '.' }}
+          file: ${{ inputs.dockerfile || 'Dockerfile' }}
+          platforms: ${{ matrix.platform }}
+          provenance: true
+          sbom: true
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            GIT_COMMIT=${{ github.sha }}
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.push.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata (tags)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=edge,enable={{is_default_branch}}
+            type=sha
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/') }}
+
+      - name: Create multi-arch manifest
+        working-directory: /tmp/digests
+        run: |
+          # Deliberate word-splitting: expand the -t tag flags and the per-arch
+          # image@digest references into separate argv entries.
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      - name: Inspect
+        run: docker buildx imagetools inspect "${IMAGE}:${{ steps.meta.outputs.version }}"
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign the multi-arch image (keyless)
+        run: |
+          DIGEST=$(docker buildx imagetools inspect "${IMAGE}:${{ steps.meta.outputs.version }}" \
+            --format '{{ json .Manifest.Digest }}' | tr -d '"')
+          cosign sign --yes "${IMAGE}@${DIGEST}"

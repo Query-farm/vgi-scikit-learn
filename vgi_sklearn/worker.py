@@ -39,7 +39,14 @@ from vgi_sklearn.typed_models import TYPED_FIT_FUNCTIONS
 
 log = logging.getLogger(__name__)
 
+# The version the worker advertises over VGI. `implementation_version` is the
+# worker *software* version (a semver per the VGI protocol), so it must be the
+# released package version — not a build/commit id. Both it and the data version
+# track __version__, which is the single source bumped per release.
+IMPLEMENTATION_VERSION = __version__
 DATA_VERSION = __version__
+# Build provenance only (Sentry release / diagnostics) — NOT the advertised
+# implementation version, which must stay a semver.
 GIT_COMMIT = os.environ.get("VGI_SKLEARN_GIT_COMMIT") or "unknown"
 
 # Every callable the worker exposes, grouped by scikit-learn area.
@@ -82,7 +89,7 @@ class SklearnCatalog(ReadOnlyCatalogInterface):
         return [
             CatalogInfo(
                 name=self._effective_catalog_name,
-                implementation_version=GIT_COMMIT,
+                implementation_version=IMPLEMENTATION_VERSION,
                 data_version_spec=DATA_VERSION,
                 attach_option_specs=[spec.serialize() for spec in self.attach_option_specs],
             )
@@ -93,7 +100,7 @@ class SklearnCatalog(ReadOnlyCatalogInterface):
         return dataclasses.replace(
             result,
             resolved_data_version=DATA_VERSION,
-            resolved_implementation_version=GIT_COMMIT,
+            resolved_implementation_version=IMPLEMENTATION_VERSION,
         )
 
 
@@ -104,13 +111,47 @@ class SklearnWorker(Worker):
     catalog_interface = SklearnCatalog
 
 
+def _warn_if_ephemeral_state() -> None:
+    """Warn when the worker's state dirs look container-local (no volume mounted).
+
+    The published image declares a ``/data`` volume (advertised via the
+    ``farm.query.vgi.volumes`` image label) that holds the model registry and the
+    shared ``BoundStorage`` SQLite. If the worker runs with those defaults but
+    ``/data`` is not actually a mounted volume, models and shared state live on
+    the container's writable layer and vanish on ``docker run --rm`` — and are not
+    shared across instances. Surface that loudly instead of silently losing data.
+
+    A no-op outside that container shape: it only fires when the state dirs are
+    rooted under ``/data`` and ``/proc/mounts`` is readable (a Linux container).
+    Never raises — an unmounted run is still valid for ephemeral use.
+    """
+    sqlite_dir = os.path.dirname(os.environ.get("VGI_WORKER_SQLITE_PATH", ""))
+    roots = [p for p in (os.environ.get("SKLEARN_MODELS_DIR", ""), sqlite_dir) if p.startswith("/data")]
+    if not roots:
+        return
+    try:
+        with open("/proc/mounts", encoding="utf-8") as fh:  # Linux container only
+            mountpoints = {parts[1] for line in fh if len(parts := line.split()) > 1}
+    except OSError:
+        return
+    if "/data" not in mountpoints and not any(r in mountpoints for r in roots):
+        log.warning(
+            "state directory /data is not a mounted volume: the model registry and "
+            "shared BoundStorage are container-local and will NOT persist across "
+            "restarts or be shared across worker instances. Mount a volume at /data "
+            "(the image advertises this via the 'farm.query.vgi.volumes' label)."
+        )
+
+
 def main() -> None:
     """Run the worker (stdio by default; pass ``--http`` for the HTTP server)."""
+    _warn_if_ephemeral_state()
     SklearnWorker.main()
 
 
 def main_http() -> None:
     """Run the worker over HTTP (injects ``--http`` into the worker CLI)."""
+    _warn_if_ephemeral_state()
     argv = sys.argv[1:]
     if "--http" not in argv:
         argv = ["--http", *argv]
