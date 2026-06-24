@@ -107,6 +107,19 @@ jobs:
       - name: Run extension integration suite
         run: ci/run-integration.sh
 
+  # Code style/lint gate (ruff). Platform-independent, so Linux-only; ruff comes
+  # from the `dev` dependency group (same as pytest in the unit job).
+  lint:
+    name: ruff (lint + format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - name: Ruff lint
+        run: uv run --frozen --python 3.13 ruff check .
+      - name: Ruff format check
+        run: uv run --frozen --python 3.13 ruff format --check .
+
   # Lint the worker's catalog metadata (descriptions, tags, examples, column
   # docs) with vgi-lint-check. Metadata quality is platform-independent, so
   # Linux-only. fail-on: warning — warnings/errors fail CI; advisory info does not.
