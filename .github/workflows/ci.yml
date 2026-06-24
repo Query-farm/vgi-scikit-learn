@@ -86,13 +86,20 @@ jobs:
           # invoking the runner, so relative paths would not resolve. The worker
           # LOCATION is consumed by the (native) extension process, so on Windows
           # it must be a native path to the .exe launcher.
+          #
+          # Transport: prefix the worker with `launch:` so the extension uses the
+          # warm Unix-socket launcher — the worker is spawned ONCE and reused
+          # across every ATTACH, instead of a fresh subprocess per attach that
+          # re-pays scikit-learn/numpy import startup each time (minutes -> seconds).
+          # Windows stays on the subprocess transport: the launcher needs AF_UNIX,
+          # which Python on Windows does not reliably provide.
           if [ "$RUNNER_OS" = "Windows" ]; then
             UNITTEST="$PWD/$(find hb -name 'haybarn-unittest.exe' -type f | head -1)"
             WORKER=$(cygpath -w "$PWD/.venv/Scripts/vgi-sklearn.exe")
           else
             UNITTEST="$PWD/$(find hb -name 'haybarn-unittest' -type f | head -1)"
             chmod +x "$UNITTEST"
-            WORKER="$PWD/.venv/bin/vgi-sklearn"
+            WORKER="launch:$PWD/.venv/bin/vgi-sklearn"
           fi
           echo "HAYBARN_UNITTEST=$UNITTEST" >> "$GITHUB_ENV"
           echo "VGI_SKLEARN_WORKER=$WORKER" >> "$GITHUB_ENV"

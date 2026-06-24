@@ -7,8 +7,12 @@
 #
 # Required environment:
 #   HAYBARN_UNITTEST    path to the haybarn-unittest binary
-#   VGI_SKLEARN_WORKER  worker LOCATION the .test files attach (a stdio command
-#                       such as the installed `vgi-sklearn`, or an http:// URL)
+#   VGI_SKLEARN_WORKER  worker LOCATION the .test files attach. One of:
+#                         - a stdio command (e.g. the installed `vgi-sklearn`)
+#                         - `launch:<command>` for the warm Unix-socket launcher
+#                           transport (worker spawned once, reused per ATTACH —
+#                           avoids per-attach Python/sklearn import startup)
+#                         - an `http://` URL for a running HTTP server
 # Optional:
 #   STAGE               scratch dir for the preprocessed test tree (default: mktemp)
 set -euo pipefail
