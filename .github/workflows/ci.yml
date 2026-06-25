@@ -83,19 +83,18 @@ jobs:
       - name: Resolve runner + worker paths
         run: |
           # Absolute paths: run-integration.sh cd's into a staging dir before
-          # invoking the runner, so relative paths would not resolve. The worker
-          # LOCATION is consumed by the (native) extension process, so on Windows
-          # it must be a native path to the .exe launcher.
+          # invoking the runner, so relative paths would not resolve.
           #
-          # Transport: prefix the worker with `launch:` so the extension uses the
-          # warm Unix-socket launcher — the worker is spawned ONCE and reused
-          # across every ATTACH, instead of a fresh subprocess per attach that
-          # re-pays scikit-learn/numpy import startup each time (minutes -> seconds).
-          # Windows stays on the subprocess transport: the launcher needs AF_UNIX,
-          # which Python on Windows does not reliably provide.
+          # Transport per OS — both WARM (the worker is started ONCE and reused
+          # across every ATTACH, instead of cold-spawning a subprocess per attach
+          # that re-pays the scikit-learn/numpy import; minutes -> seconds):
+          #   Linux/macOS: the `launch:` AF_UNIX socket launcher.
+          #   Windows:     HTTP. The launcher needs AF_UNIX, which CPython on
+          #                Windows doesn't reliably provide, so we run one HTTP
+          #                server (started in the next step) and attach over it.
           if [ "$RUNNER_OS" = "Windows" ]; then
             UNITTEST="$PWD/$(find hb -name 'haybarn-unittest.exe' -type f | head -1)"
-            WORKER=$(cygpath -w "$PWD/.venv/Scripts/vgi-sklearn.exe")
+            WORKER="http://localhost:8000"
           else
             UNITTEST="$PWD/$(find hb -name 'haybarn-unittest' -type f | head -1)"
             chmod +x "$UNITTEST"
@@ -105,7 +104,20 @@ jobs:
           echo "VGI_SKLEARN_WORKER=$WORKER" >> "$GITHUB_ENV"
 
       - name: Run extension integration suite
-        run: ci/run-integration.sh
+        run: |
+          # Windows: start one HTTP worker and reuse it for the whole suite (the
+          # warm transport for a platform without the AF_UNIX launcher). One cold
+          # scikit-learn import instead of one per ATTACH (~14min -> ~1min).
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            VGI_SIGNING_KEY=dev .venv/Scripts/python serve.py --port 8000 &
+            SRV=$!
+            trap 'kill "$SRV" 2>/dev/null || true' EXIT
+            for _ in $(seq 1 120); do
+              curl -fsS -o /dev/null http://localhost:8000/health 2>/dev/null && break
+              sleep 1
+            done
+          fi
+          ci/run-integration.sh
 
   # Code style + types gate (ruff + mypy), matching the vgi-python tooling.
   # Platform-independent, so Linux-only; the tools come from the `dev`
