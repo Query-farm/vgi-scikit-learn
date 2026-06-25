@@ -53,7 +53,9 @@ EOF
 "$HAYBARN_UNITTEST" "test/_warm.test" >/dev/null 2>&1 || echo "::warning::extension warm step did not fully succeed"
 rm -f "$STAGE/test/_warm.test"
 
-# Run the whole suite in one invocation, streaming the runner's native
-# sqllogictest report. Any failed assertion exits non-zero and fails the job.
-echo "Running suite (worker: $VGI_SKLEARN_WORKER) ..."
-"$HAYBARN_UNITTEST" "test/sql/*"
+# Run the suite in one invocation, streaming the runner's native sqllogictest
+# report. Any failed assertion exits non-zero and fails the job. TEST_PATTERN
+# defaults to the whole suite; override it (e.g. one file) for a quick smoke.
+TEST_PATTERN="${TEST_PATTERN:-test/sql/*}"
+echo "Running suite (pattern: $TEST_PATTERN, worker: $VGI_SKLEARN_WORKER) ..."
+"$HAYBARN_UNITTEST" "$TEST_PATTERN"

@@ -44,25 +44,22 @@ jobs:
       smoke_import: "vgi_sklearn, sklearn, numpy, scipy"
       http_run_args: "-e VGI_SIGNING_KEY=dev"
       version_check_cmd: "ci/check-version.sh"
-      # Full sqllogictest suite against the built image, in BOTH transports
-      # (stdio + HTTP), via the signed vgi extension. $CITEST_IMAGE is the loaded
-      # <image>:citest-amd64 ref; GH_TOKEN is provided for the release download.
+      # Validate the built image's two transports against the signed vgi
+      # extension. The worker *logic* over the stdio/AF_UNIX transport is already
+      # exercised every run by the gating `ci` job (all test/sql/*, real `launch:`
+      # transport, three OSes), so we don't re-run all 16 files cold here: a bare
+      # `docker run … stdio` LOCATION cold-boots a fresh container (numpy/scipy/
+      # sklearn import) on *every* ATTACH, which made this step ~9min. Instead:
+      #   - stdio: smoke ONE file (one cold container) to prove the stdio
+      #     entrypoint speaks the protocol in-image;
+      #   - HTTP: run the FULL suite against a SINGLE warm container (end-to-end
+      #     image check, no per-ATTACH startup).
+      # Per-phase timings are published to the job summary. $CITEST_IMAGE is the
+      # loaded <image>:citest-amd64 ref; GH_TOKEN is provided for the download.
       image_test: |
-        # Diagnostics: time each phase and publish a breakdown to the job summary.
-        # Background: the regular `ci / integration` job runs this same suite in
-        # ~40s over the warm `launch:` transport (worker spawned once, reused per
-        # ATTACH). Here the stdio transport gives the extension a bare `docker run`
-        # as the worker LOCATION, so every ATTACH cold-boots a fresh container
-        # (numpy/scipy/sklearn import each time) — the dominant cost. The HTTP
-        # transport reuses one container. The per-phase timings below make that
-        # split visible run-over-run; see ATTACH count for the cold-start multiplier.
         _t0=$(date +%s)
-        ATTACHES=$(grep -rhcE "ATTACH 'sklearn'" test/sql/*.test 2>/dev/null | awk '{s+=$1} END{print s+0}')
-        FILES=$(ls test/sql/*.test 2>/dev/null | wc -l | tr -d ' ')
-
         echo "::group::image + runner facts"
         docker image inspect "$CITEST_IMAGE" --format 'image size: {{.Size}} bytes  arch: {{.Architecture}}' || true
-        echo "suite: $ATTACHES ATTACH(es) across $FILES test files (stdio cold-starts a container per ATTACH)"
         echo "runner: $(nproc) cpus"; free -h 2>/dev/null || true
         echo "::endgroup::"
 
@@ -76,15 +73,16 @@ jobs:
         echo "::endgroup::"
         T_HB=$(date +%s)
 
-        echo "::group::SQL suite — stdio transport (fresh 'docker run' per ATTACH)"
+        echo "::group::stdio entrypoint smoke (one cold container, datasets only)"
         docker volume rm vgi_sklearn_state_ci >/dev/null 2>&1 || true
-        VGI_SKLEARN_WORKER="docker run -i --rm -v vgi_sklearn_state_ci:/data $CITEST_IMAGE stdio" \
+        TEST_PATTERN="test/sql/sklearn_datasets.test" \
+          VGI_SKLEARN_WORKER="docker run -i --rm -v vgi_sklearn_state_ci:/data $CITEST_IMAGE stdio" \
           ci/run-integration.sh
         docker volume rm vgi_sklearn_state_ci >/dev/null 2>&1 || true
         echo "::endgroup::"
         T_STDIO=$(date +%s)
 
-        echo "::group::SQL suite — HTTP transport (one reused container)"
+        echo "::group::full SQL suite — HTTP transport (one warm container)"
         CID=$(docker run -d -p 8000:8000 -v vgi_sklearn_state_ci:/data -e VGI_SIGNING_KEY=dev "$CITEST_IMAGE")
         trap 'docker rm -f "$CID" >/dev/null 2>&1; docker volume rm vgi_sklearn_state_ci >/dev/null 2>&1' EXIT
         for _ in $(seq 1 30); do curl -fsS -o /dev/null http://localhost:8000/health && break; sleep 1; done
@@ -100,8 +98,8 @@ jobs:
           echo "| phase | seconds |"
           echo "| --- | ---: |"
           echo "| download haybarn | $((T_HB - _t0)) |"
-          echo "| stdio suite (cold container ×$ATTACHES ATTACHes) | $((T_STDIO - T_HB)) |"
+          echo "| stdio entrypoint smoke (1 cold container) | $((T_STDIO - T_HB)) |"
           echo "| http container ready | $((T_READY - T_STDIO)) |"
-          echo "| http suite (1 warm container) | $((T_HTTP - T_READY)) |"
+          echo "| full suite over HTTP (1 warm container) | $((T_HTTP - T_READY)) |"
           echo "| **total** | $((T_HTTP - _t0)) |"
         } | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
