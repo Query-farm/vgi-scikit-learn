@@ -34,7 +34,7 @@ from .schema_utils import field as sfield
 class ConfusionMatrixArgs:
     """Arguments for the confusion_matrix function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Table containing the actual and predicted label columns.")]
+    data: Annotated[TableInput, Arg(0, doc="The actual and predicted label columns.")]
     actual: Annotated[str, Arg("actual", default="actual", doc="Name of the true-label column.")]
     predicted: Annotated[str, Arg("predicted", default="predicted", doc="Name of the predicted-label column.")]
 
@@ -85,7 +85,8 @@ class ConfusionMatrix(SinkBuffer[ConfusionMatrixArgs, DrainState]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.metrics.confusion_matrix((SELECT y, yhat FROM preds), "
+                    "SELECT * FROM sklearn.metrics.confusion_matrix("
+                    "(SELECT * FROM (VALUES (0, 0), (1, 1), (0, 1), (1, 0)) AS preds(y, yhat)), "
                     "actual := 'y', predicted := 'yhat')"
                 ),
                 description="Long-format confusion matrix",
@@ -146,7 +147,7 @@ class ConfusionMatrix(SinkBuffer[ConfusionMatrixArgs, DrainState]):
 class SilhouetteArgs:
     """Arguments for the silhouette_score function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Table of features plus a cluster-label column.")]
+    data: Annotated[TableInput, Arg(0, doc="Feature columns plus a cluster-label column.")]
     label: Annotated[str, Arg("label", default="cluster", doc="Name of the cluster-label column.")]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to exclude from features.")]
 
@@ -193,7 +194,7 @@ class SilhouetteScore(SinkBuffer[SilhouetteArgs, DrainState]):
         }
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.metrics.silhouette_score((SELECT * FROM clustered), label => 'cluster', id => 'id')",  # noqa: E501
+                sql="SELECT * FROM sklearn.metrics.silhouette_score((SELECT * FROM (VALUES (1, 0.1, 0.2, 0), (2, 0.2, 0.1, 0), (3, 5.0, 5.1, 1), (4, 5.1, 5.0, 1)) AS clustered(id, x1, x2, cluster)), label => 'cluster', id => 'id')",  # noqa: E501
                 description="Silhouette score of a clustering",
             )
         ]
@@ -246,7 +247,7 @@ class SilhouetteScore(SinkBuffer[SilhouetteArgs, DrainState]):
 
 @dataclass(slots=True, frozen=True)
 class _CurveArgs:
-    data: Annotated[TableInput, Arg(0, doc="Table with the true-label and score columns.")]
+    data: Annotated[TableInput, Arg(0, doc="The true-label and score columns.")]
     y_true: Annotated[str, Arg("y_true", default="y_true", doc="Name of the true binary-label column (0/1).")]
     y_score: Annotated[str, Arg("y_score", default="y_score", doc="Name of the score/probability column.")]
 
@@ -339,7 +340,8 @@ class RocCurve(_CurveFunction):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.metrics.roc_curve((SELECT y, p FROM preds), "
+                    "SELECT * FROM sklearn.metrics.roc_curve("
+                    "(SELECT * FROM (VALUES (0, 0.1), (1, 0.9), (0, 0.2), (1, 0.8)) AS preds(y, p)), "
                     "y_true := 'y', y_score := 'p') ORDER BY fpr"
                 ),
                 description="ROC curve points",
@@ -400,7 +402,8 @@ class PrecisionRecallCurve(_CurveFunction):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.metrics.precision_recall_curve((SELECT y, p FROM preds), "
+                    "SELECT * FROM sklearn.metrics.precision_recall_curve("
+                    "(SELECT * FROM (VALUES (0, 0.1), (1, 0.9), (0, 0.2), (1, 0.8)) AS preds(y, p)), "
                     "y_true := 'y', y_score := 'p') ORDER BY recall"
                 ),
                 description="Precision-recall curve points",
@@ -422,7 +425,7 @@ class PrecisionRecallCurve(_CurveFunction):
 
 @dataclass(slots=True, frozen=True)
 class _CalibrationArgs:
-    data: Annotated[TableInput, Arg(0, doc="Table with the true-label and probability columns.")]
+    data: Annotated[TableInput, Arg(0, doc="The true-label and probability columns.")]
     y_true: Annotated[str, Arg("y_true", default="y_true", doc="Name of the true binary-label column (0/1).")]
     y_score: Annotated[str, Arg("y_score", default="y_score", doc="Name of the predicted-probability column.")]
     n_bins: Annotated[int, Arg("n_bins", default=10, doc="Number of bins to group predicted probabilities into.")]
@@ -475,7 +478,8 @@ class CalibrationCurve(SinkBuffer[_CalibrationArgs, DrainState]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.metrics.calibration_curve((SELECT y, p FROM preds), "
+                    "SELECT * FROM sklearn.metrics.calibration_curve("
+                    "(SELECT * FROM (VALUES (0, 0.1), (1, 0.9), (0, 0.2), (1, 0.8)) AS preds(y, p)), "
                     "y_true := 'y', y_score := 'p', n_bins := 10) ORDER BY prob_pred"
                 ),
                 description="Calibration curve points",

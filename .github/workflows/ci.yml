@@ -126,7 +126,14 @@ jobs:
 
   # Lint the worker's catalog metadata (descriptions, tags, examples, column
   # docs) with vgi-lint-check. Metadata quality is platform-independent, so
-  # Linux-only. fail-on: warning — warnings/errors fail CI; advisory info does not.
+  # Linux-only. Two passes, no severity overrides:
+  #   1. static (--no-execute), fail-on: warning — strict metadata gate (every
+  #      description/tag/example/column-doc warning fails CI).
+  #   2. execute, fail-on: error — runs every example's SQL live; a binding
+  #      failure (or a broken vgi.executable_examples block) is an error and
+  #      fails CI, while a purely illustrative runtime/return-rows warning does
+  #      not. The handful of examples that read a *stored* model at bind (predict
+  #      etc.) are scoped out via [tool.vgi-lint-check.per_object] in pyproject.
   lint-metadata:
     name: vgi-lint-check (metadata quality)
     runs-on: ubuntu-latest
@@ -135,8 +142,15 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - name: Install the worker (from the lockfile)
         run: uv sync --frozen --python 3.13
-      - name: Lint worker metadata
+      - name: Lint worker metadata (static)
         uses: Query-farm/vgi-lint-check@v1
         with:
           location: .venv/bin/vgi-sklearn
+          execute: false
           fail-on: warning
+      - name: Lint worker examples (execute)
+        uses: Query-farm/vgi-lint-check@v1
+        with:
+          location: .venv/bin/vgi-sklearn
+          execute: true
+          fail-on: error

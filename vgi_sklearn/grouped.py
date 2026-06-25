@@ -167,7 +167,9 @@ class FitModel(AggregateFunction[FitState]):
                     "SELECT region, sklearn.models.fit_model("
                     "{'tenure': tenure, 'spend': spend}, churned, "
                     "estimator := 'gradient_boosting_classifier', hyperparams := '{}') AS m "
-                    "FROM customers GROUP BY region"
+                    "FROM (VALUES ('east', 12, 30.0, 0), ('east', 3, 80.0, 1), "
+                    "('west', 24, 20.0, 0), ('west', 1, 90.0, 1)) "
+                    "AS customers(region, tenure, spend, churned) GROUP BY region"
                 ),
                 description="One churn model per region",
             )
@@ -183,8 +185,8 @@ class FitModel(AggregateFunction[FitState]):
         cls,
         states: dict[int, FitState],
         group_ids: pa.Int64Array,
-        features: Annotated[pa.Array, Param(doc="Feature STRUCT, e.g. {'a': a, 'b': b}")],
-        target: Annotated[pa.Array, Param(doc="Target column (numeric, or string class labels)")],
+        features: Annotated[pa.Array, Param(doc="Feature values, one field per feature, e.g. {'a': a, 'b': b}")],
+        target: Annotated[pa.Array, Param(doc="Target column (continuous values, or string class labels)")],
         estimator: Annotated[str, ConstParam(doc="Estimator name, e.g. 'random_forest_classifier'")],
         hyperparams: Annotated[str, ConstParam(doc="JSON hyperparameters; '{}' for defaults")],
     ) -> None:
@@ -367,8 +369,8 @@ class PredictOne(ScalarFunction):
     @classmethod
     def compute(
         cls,
-        model: Annotated[pa.BinaryArray, Param(doc="A model BLOB (from fit_model / fit)")],
-        features: Annotated[pa.Array, Param(doc="Feature STRUCT")],
+        model: Annotated[pa.BinaryArray, Param(doc="A fitted model (from fit_model / fit)")],
+        features: Annotated[pa.Array, Param(doc="Feature values, one field per feature")],
     ) -> Annotated[pa.DoubleArray, Returns(pa.float64())]:
         """Score each row through its model BLOB and return numeric predictions."""
         vals = _predict_values(model, features)
@@ -416,8 +418,8 @@ class PredictClassOne(ScalarFunction):
     @classmethod
     def compute(
         cls,
-        model: Annotated[pa.BinaryArray, Param(doc="A classifier model BLOB")],
-        features: Annotated[pa.Array, Param(doc="Feature STRUCT")],
+        model: Annotated[pa.BinaryArray, Param(doc="A fitted classifier model")],
+        features: Annotated[pa.Array, Param(doc="Feature values, one field per feature")],
     ) -> Annotated[pa.StringArray, Returns(pa.string())]:
         """Score each row through its classifier BLOB and return text class labels."""
         vals = _predict_values(model, features)
@@ -464,8 +466,8 @@ class PredictProbaOne(ScalarFunction):
     @classmethod
     def compute(
         cls,
-        model: Annotated[pa.BinaryArray, Param(doc="A classifier model BLOB")],
-        features: Annotated[pa.Array, Param(doc="Feature STRUCT")],
+        model: Annotated[pa.BinaryArray, Param(doc="A fitted classifier model")],
+        features: Annotated[pa.Array, Param(doc="Feature values, one field per feature")],
     ) -> Annotated[pa.ListArray, Returns(pa.list_(pa.float64()))]:
         """Return per-class probabilities for each row from its classifier BLOB."""
         vals = _predict_values(model, features, proba=True)

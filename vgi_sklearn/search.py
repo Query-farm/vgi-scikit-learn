@@ -89,7 +89,7 @@ def _param_grid(tag: str, value: dict[str, Any] | None) -> dict[str, list[Any]]:
 class GridSearchArgs:
     """Arguments for the grid_search function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
+    data: Annotated[TableInput, Arg(0, doc="Training rows: features + target [+ id].")]
     estimator: Annotated[
         TaggedUnion,
         Arg(
@@ -303,7 +303,7 @@ def _run_search(cls: type, params: Any, state: DrainState, out: OutputCollector,
 class RandomizedSearchArgs:
     """Arguments for the randomized_search function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
+    data: Annotated[TableInput, Arg(0, doc="Training rows: features + target [+ id].")]
     estimator: Annotated[
         TaggedUnion,
         Arg(

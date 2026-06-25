@@ -119,7 +119,7 @@ class _FoldFunction[TArgs: _HasId](SinkBuffer[TArgs, DrainState]):
 class KFoldArgs:
     """Arguments for the kfold function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Table to split (only the id column is used).")]
+    data: Annotated[TableInput, Arg(0, doc="Rows to split (only the id column is used).")]
     id: Annotated[str, Arg("id", default="", doc="Column carried onto each row (required).")]
     n_splits: Annotated[int, Arg("n_splits", default=5, doc="Number of folds.")]
     shuffle: Annotated[bool, Arg("shuffle", default=False, doc="Shuffle rows before splitting.")]
@@ -182,7 +182,7 @@ class KFold(_FoldFunction[KFoldArgs]):
 class StratifiedKFoldArgs:
     """Arguments for the stratified_kfold function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Table to split (id + the stratify label column).")]
+    data: Annotated[TableInput, Arg(0, doc="Rows to split (id + the stratify label column).")]
     id: Annotated[str, Arg("id", default="", doc="Column carried onto each row (required).")]
     label: Annotated[str, Arg("label", default="", doc="Label column to stratify on (required).")]
     n_splits: Annotated[int, Arg("n_splits", default=5, doc="Number of folds.")]
@@ -260,7 +260,7 @@ class StratifiedKFold(_FoldFunction[StratifiedKFoldArgs]):
 class GroupKFoldArgs:
     """Arguments for the group_kfold function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Table to split (id + the group column).")]
+    data: Annotated[TableInput, Arg(0, doc="Rows to split (id + the group column).")]
     id: Annotated[str, Arg("id", default="", doc="Column carried onto each row (required).")]
     # Named 'group_col' rather than 'group' because `group :=` collides with the SQL GROUP keyword.
     group_col: Annotated[
@@ -336,7 +336,7 @@ class GroupKFold(_FoldFunction[GroupKFoldArgs]):
 class TimeSeriesSplitArgs:
     """Arguments for the timeseries_split function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Table to split, in time order (only the id column is used).")]
+    data: Annotated[TableInput, Arg(0, doc="Rows to split, in time order (only the id column is used).")]
     id: Annotated[str, Arg("id", default="", doc="Column carried onto each row (required).")]
     n_splits: Annotated[int, Arg("n_splits", default=5, doc="Number of expanding-window splits.")]
 

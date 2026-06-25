@@ -25,7 +25,7 @@ classifiers = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    "vgi-python[http]>=0.8.3",
+    "vgi-python[http]>=0.8.5",
     "scikit-learn>=1.5",
     "numpy",
     "skops>=0.11",
@@ -37,7 +37,7 @@ dependencies = [
 # the base deps: the published Docker image installs `.[serve]`, while a plain
 # `pip install vgi-sklearn` for an on-host stdio worker stays lean.
 serve = [
-    "vgi-python[http,oauth]>=0.8.3",
+    "vgi-python[http,oauth]>=0.8.5",
     "vgi-rpc[sentry]",
     "authlib",
 ]
@@ -148,11 +148,18 @@ warn_unused_ignores = true
 module = ["sklearn.*", "scipy.*", "skops.*", "joblib.*", "pandas.*"]
 ignore_missing_imports = true
 
-[tool.vgi-lint-check.severity]
-# Per-function `vgi.example_queries` are illustrative documentation — they
-# reference hypothetical tables (a `predictions` table) or a pre-fit model, so
-# they cannot execute standalone. The curated catalog `vgi.executable_examples`
-# are the guaranteed-runnable, must-pass set (VGI906, error). Keep the
-# illustrative-example execution rules advisory rather than gating.
-VGI901 = "info"
-VGI902 = "info"
+
+[tool.vgi-lint-check.per_object]
+# VGI901/902 (--execute only) run each example's SQL live. These functions read a
+# *stored* model/transformer at bind time, so their single-statement illustrative
+# examples cannot bind in a fresh session (no model exists yet) — the fit->predict
+# workflow is demonstrated in the catalog's vgi.executable_examples instead. This
+# is a surgical, documented exception scoped to exactly the model-dependent
+# functions; every other example binds and runs on real/inline data.
+"sklearn.models.predict" = { ignore = ["VGI901", "VGI902"] }
+"sklearn.models.predict_one" = { ignore = ["VGI901", "VGI902"] }
+"sklearn.models.predict_class_one" = { ignore = ["VGI901", "VGI902"] }
+"sklearn.models.predict_proba_one" = { ignore = ["VGI901", "VGI902"] }
+"sklearn.models.partial_dependence" = { ignore = ["VGI901", "VGI902"] }
+"sklearn.models.permutation_importance" = { ignore = ["VGI901", "VGI902"] }
+"sklearn.preprocessing.apply_transform" = { ignore = ["VGI901", "VGI902"] }

@@ -116,8 +116,11 @@ def _example(name: str) -> list[FunctionExample]:
     """Build a one-entry example list for a metric named ``name``."""
     return [
         FunctionExample(
-            sql=f"SELECT sklearn.{name}(actual, predicted) FROM predictions",
-            description=f"{name} over a predictions table",
+            sql=(
+                f"SELECT sklearn.metrics.{name}(actual, predicted) "
+                "FROM (VALUES (1.0, 0.9), (0.0, 0.2), (1.0, 0.8), (0.0, 0.1)) AS t(actual, predicted)"
+            ),
+            description=f"{name} over inline (actual, predicted) pairs",
         )
     ]
 

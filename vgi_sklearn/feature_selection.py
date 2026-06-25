@@ -74,7 +74,7 @@ def _score_func(name: str) -> Any:
 class SelectKBestArgs:
     """Arguments for the select_k_best function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Table of numeric features + the target column.")]
+    data: Annotated[TableInput, Arg(0, doc="Feature columns plus the target column.")]
     target: Annotated[str, Arg("target", default="", doc="Name of the target/label column (required).")]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to exclude from features.")]
     k: Annotated[int, Arg("k", default=10, doc="Number of top features to flag as selected (capped at n_features).")]
@@ -223,7 +223,7 @@ class SelectKBest(SinkBuffer[SelectKBestArgs, DrainState]):
 class VarianceThresholdArgs:
     """Arguments for the variance_threshold function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Table of numeric features.")]
+    data: Annotated[TableInput, Arg(0, doc="Feature columns.")]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to exclude from features.")]
     threshold: Annotated[float, Arg("threshold", default=0.0, doc="Keep features with variance strictly above this.")]
 

@@ -216,7 +216,7 @@ def _prediction_field(task: str) -> pa.Field:
 class FitArgs:
     """Arguments for the fit function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
+    data: Annotated[TableInput, Arg(0, doc="Training rows: features + target [+ id].")]
     model_name: Annotated[str, Arg("model_name", default="", doc="Name to store the fitted model under (required).")]
     estimator: Annotated[str, Arg("estimator", default="random_forest_classifier", doc="Estimator name.")]
     target: Annotated[str, Arg("target", default="", doc="Name of the target/label column (required).")]
@@ -418,12 +418,12 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
 class PredictArgs:
     """Arguments for the predict function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Table to score (must contain the model's feature columns).")]
+    data: Annotated[TableInput, Arg(0, doc="Rows to score (must contain the model's feature columns).")]
     model_name: Annotated[
         str, Arg("model_name", default="", doc="Name of a model in the registry. Provide this OR model.")
     ]
     model: Annotated[
-        bytes, Arg("model", default=b"", doc="A model BLOB (as returned by fit). Provide this OR model_name.")
+        bytes, Arg("model", default=b"", doc="A fitted model, as returned by fit. Provide this OR model_name.")
     ]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to carry through.")]
     with_proba: Annotated[
@@ -595,7 +595,7 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
 class CrossValArgs:
     """Arguments for the cross_val_predict function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
+    data: Annotated[TableInput, Arg(0, doc="Training rows: features + target [+ id].")]
     estimator: Annotated[str, Arg("estimator", default="random_forest_classifier", doc="Estimator name.")]
     target: Annotated[str, Arg("target", default="", doc="Name of the target/label column (required).")]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to carry through.")]
@@ -725,7 +725,7 @@ class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
 class CrossValScoreArgs:
     """Arguments for the cross_val_score function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
+    data: Annotated[TableInput, Arg(0, doc="Training rows: features + target [+ id].")]
     estimator: Annotated[str, Arg("estimator", default="random_forest_classifier", doc="Estimator name.")]
     target: Annotated[str, Arg("target", default="", doc="Name of the target/label column (required).")]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to exclude from features.")]
@@ -851,12 +851,12 @@ class CrossValScore(SinkBuffer[CrossValScoreArgs, DrainState]):
 class PermImportanceArgs:
     """Arguments for the permutation_importance function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Evaluation table (the model's features + the target column).")]
+    data: Annotated[TableInput, Arg(0, doc="Evaluation rows: the model's features + the target column.")]
     model_name: Annotated[
         str, Arg("model_name", default="", doc="Name of a model in the registry. Provide this OR model.")
     ]
     model: Annotated[
-        bytes, Arg("model", default=b"", doc="A model BLOB (as returned by fit). Provide this OR model_name.")
+        bytes, Arg("model", default=b"", doc="A fitted model, as returned by fit. Provide this OR model_name.")
     ]
     target: Annotated[str, Arg("target", default="", doc="Name of the target/label column (required).")]
     n_repeats: Annotated[int, Arg("n_repeats", default=5, doc="Number of times each feature is shuffled.")]
@@ -1003,12 +1003,12 @@ class PermutationImportance(SinkBuffer[PermImportanceArgs, DrainState]):
 class PartialDependenceArgs:
     """Arguments for the partial_dependence function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Background table (the model's feature columns).")]
+    data: Annotated[TableInput, Arg(0, doc="Background rows: the model's feature columns.")]
     model_name: Annotated[
         str, Arg("model_name", default="", doc="Name of a model in the registry. Provide this OR model.")
     ]
-    model: Annotated[bytes, Arg("model", default=b"", doc="A model BLOB. Provide this OR model_name.")]
-    feature: Annotated[str, Arg("feature", default="", doc="Numeric feature column to vary (required).")]
+    model: Annotated[bytes, Arg("model", default=b"", doc="A fitted model. Provide this OR model_name.")]
+    feature: Annotated[str, Arg("feature", default="", doc="Feature column to vary (required).")]
     grid_resolution: Annotated[int, Arg("grid_resolution", default=100, doc="Number of grid points along the feature.")]
 
 

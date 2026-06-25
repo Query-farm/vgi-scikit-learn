@@ -38,7 +38,7 @@ _VECTORIZER_ID_NOTE = "If an `id` column is named, it is carried through as the 
 
 @dataclass(slots=True, frozen=True)
 class _VectorizerArgs:
-    data: Annotated[TableInput, Arg(0, doc="Table with an id column and a text column.")]
+    data: Annotated[TableInput, Arg(0, doc="An id column and a text column.")]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to carry onto each emitted row.")]
     text: Annotated[
         str, Arg("text", default="", doc="Text column to vectorize (defaults to the single non-id column).")
@@ -183,7 +183,7 @@ class CountVectorizerFn(_Vectorizer):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.preprocessing.count_vectorizer((SELECT id, body FROM docs), id := 'id', text := 'body')"  # noqa: E501
+                    "SELECT * FROM sklearn.preprocessing.count_vectorizer((SELECT * FROM (VALUES (1, 'the cat sat on the mat'), (2, 'a quick brown dog')) AS docs(id, body)), id := 'id', text := 'body')"  # noqa: E501
                 ),
                 description="Term counts per document",
             )
@@ -241,7 +241,7 @@ class TfidfVectorizerFn(_Vectorizer):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.preprocessing.tfidf_vectorizer((SELECT id, body FROM docs), id := 'id', text := 'body')"  # noqa: E501
+                    "SELECT * FROM sklearn.preprocessing.tfidf_vectorizer((SELECT * FROM (VALUES (1, 'the cat sat on the mat'), (2, 'a quick brown dog')) AS docs(id, body)), id := 'id', text := 'body')"  # noqa: E501
                 ),
                 description="TF-IDF weights per document",
             )

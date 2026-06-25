@@ -140,7 +140,7 @@ def _parse_params(params: str) -> dict[str, Any]:
 class FitTransformerArgs:
     """Arguments for the fit_transformer function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Training table (numeric feature columns [+ id]).")]
+    data: Annotated[TableInput, Arg(0, doc="Training rows: feature columns [+ id].")]
     transformer_name: Annotated[
         str, Arg("transformer_name", default="", doc="Name to store the fitted transformer under (optional).")
     ]
@@ -302,12 +302,12 @@ class FitTransformer(SinkBuffer[FitTransformerArgs, DrainState]):
 class ApplyTransformArgs:
     """Arguments for the apply_transform function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Table to transform (must contain the transformer's feature columns).")]
+    data: Annotated[TableInput, Arg(0, doc="Rows to transform (must contain the transformer's feature columns).")]
     transformer_name: Annotated[
         str, Arg("transformer_name", default="", doc="Name of a stored transformer. Provide this OR transformer.")
     ]
     transformer: Annotated[
-        bytes, Arg("transformer", default=b"", doc="A transformer BLOB (from fit_transformer). Provide this OR name.")
+        bytes, Arg("transformer", default=b"", doc="A fitted transformer (from fit_transformer). Provide this OR name.")
     ]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to carry through.")]
 

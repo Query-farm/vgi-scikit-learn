@@ -568,12 +568,12 @@ def _estimator_kwargs(spec: list[_HP], args: Any) -> dict[str, Any]:
 
 def _make_args_class(est_name: str, spec: list[_HP]) -> type:
     fields: list[Any] = [
-        ("data", Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]),
+        ("data", Annotated[TableInput, Arg(0, doc="Training rows: features + target [+ id].")]),
         (
             "model_name",
             Annotated[
                 str,
-                Arg("model_name", default="", doc="Optional registry name; the model is always returned as a BLOB."),
+                Arg("model_name", default="", doc="Optional registry name; the model is always returned regardless."),
             ],
             dc_field(default=""),
         ),
@@ -653,8 +653,8 @@ def _make_fit_function(est_name: str) -> type:
             "examples": [
                 FunctionExample(
                     sql=(
-                        f"SELECT * FROM sklearn.{fn_name}((SELECT * FROM training), "
-                        f"model_name := 'm', target := 'y'" + (f", {param_hint}" if param_hint else "") + ")"
+                        f"SELECT * FROM sklearn.estimators.{fn_name}((SELECT * FROM sklearn.datasets.iris()), "
+                        f"target := 'target'" + (f", {param_hint}" if param_hint else "") + ")"
                     ),
                     description=f"Train a {est_name} with named hyperparameters",
                 )

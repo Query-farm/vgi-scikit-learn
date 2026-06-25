@@ -65,7 +65,7 @@ _OUTLIER_MD = columns_md_rows(
 
 @dataclass(slots=True, frozen=True)
 class _BaseArgs:
-    data: Annotated[TableInput, Arg(0, doc="Input feature table (each non-id column is a feature)")]
+    data: Annotated[TableInput, Arg(0, doc="Input rows; each non-id column is a feature")]
     id: Annotated[str, Arg("id", default="", doc="Optional column to carry through unchanged to the output")]
 
 
@@ -141,7 +141,7 @@ def _ex(name: str, extra: str = "") -> list[FunctionExample]:
     args = f", {extra}" if extra else ""
     return [
         FunctionExample(
-            sql=f"SELECT * FROM sklearn.{name}((SELECT * FROM sklearn.datasets.iris()), id => 'sample_id'{args})",
+            sql=f"SELECT * FROM sklearn.preprocessing.{name}((SELECT * FROM sklearn.datasets.iris()), id => 'sample_id'{args})",  # noqa: E501
             description=f"Apply {name} to the iris features",
         )
     ]

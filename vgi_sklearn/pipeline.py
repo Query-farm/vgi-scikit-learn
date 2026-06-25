@@ -65,7 +65,7 @@ def _parse_steps(steps: str) -> list[tuple[str, dict[str, Any]]]:
 class FitPipelineArgs:
     """Arguments for the fit_pipeline function."""
 
-    data: Annotated[TableInput, Arg(0, doc="Training table (features + target [+ id]).")]
+    data: Annotated[TableInput, Arg(0, doc="Training rows: features + target [+ id].")]
     steps: Annotated[
         str,
         Arg("steps", default="", doc='JSON array of preprocessing steps, e.g. [{"kind":"standard_scaler"}].'),
