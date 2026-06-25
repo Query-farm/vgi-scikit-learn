@@ -24,16 +24,16 @@ INSTALL vgi FROM community; LOAD vgi;
 ATTACH 'sklearn' (TYPE vgi, LOCATION 'vgi-sklearn');   -- 'uv run sklearn_worker.py' from a checkout
 
 -- train a model on a table and score rows, all in SQL
-CREATE TABLE flowers AS SELECT * FROM sklearn.iris();
+CREATE TABLE flowers AS SELECT * FROM sklearn.datasets.iris();
 
 CREATE TABLE model AS
-  SELECT model FROM sklearn.fit_random_forest_classifier(
+  SELECT model FROM sklearn.estimators.fit_random_forest_classifier(
     (SELECT sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target FROM flowers),
     target := 'target', n_estimators := 200);
 
 SET VARIABLE m = (SELECT model FROM model);
 SELECT sample_id, prediction
-FROM sklearn.predict((SELECT * EXCLUDE (target) FROM flowers), model := getvariable('m'), id := 'sample_id')
+FROM sklearn.models.predict((SELECT * EXCLUDE (target) FROM flowers), model := getvariable('m'), id := 'sample_id')
 LIMIT 5;
 ```
 
@@ -47,7 +47,7 @@ through it. Everything below is variations on that theme.
 Every modeling function follows the same SQL-friendly contract:
 
 - **Your input table is the feature matrix.** You pass it as a subquery —
-  `sklearn.pca((SELECT ...), …)`. (DuckDB allows a table function only one
+  `sklearn.preprocessing.pca((SELECT ...), …)`. (DuckDB allows a table function only one
   subquery argument, so the data goes there; everything else is a named arg.)
 - **Named arguments use `:=`** — `n_clusters := 3`, `target := 'label'`.
 - **`target`** names your label column (training only). **Every other column you
@@ -87,10 +87,10 @@ type-checked):
 CREATE TABLE churn AS
   SELECT sample_id AS customer_id, sepal_length_cm AS tenure, sepal_width_cm AS monthly_spend,
          petal_length_cm AS support_tickets, (target = 0)::INT AS churned
-  FROM sklearn.iris();
+  FROM sklearn.datasets.iris();
 
 SELECT estimator, task, n_samples, n_features, train_score
-FROM sklearn.fit_gradient_boosting_classifier(
+FROM sklearn.estimators.fit_gradient_boosting_classifier(
   -- just the features + the target; leave customer_id out (it isn't a feature)
   (SELECT tenure, monthly_spend, support_tickets, churned FROM churn),
   model_name := 'churn_gb',          -- store it in the registry under this name
@@ -108,8 +108,8 @@ easier to pass a wide projection that already includes an id, add `id :=` and
 ```sql
 -- a regressor; SELECT * includes diabetes()'s sample_id, so name it as the id
 SELECT estimator, task, train_score
-FROM sklearn.fit_random_forest_regressor(
-  (SELECT * FROM sklearn.diabetes()),
+FROM sklearn.estimators.fit_random_forest_regressor(
+  (SELECT * FROM sklearn.datasets.diabetes()),
   model_name := 'diabetes_rf', target := 'target',
   id := 'sample_id',                       -- keeps sample_id out of the features
   n_estimators := 400, max_depth := 0);    -- max_depth := 0 means "no limit"
@@ -129,7 +129,7 @@ Available estimators (each is `sklearn.fit_<name>`):
 | Discriminant | `lda`, `qda` | `solver`, `tol`, `reg_param` |
 
 > Need a hyperparameter that isn't exposed as a typed argument? The generic
-> `sklearn.fit((SELECT ...), estimator := 'ridge', target := 'y', params := '{"alpha": 0.3, "solver": "svd"}')`
+> `sklearn.models.fit((SELECT ...), estimator := 'ridge', target := 'y', params := '{"alpha": 0.3, "solver": "svd"}')`
 > accepts any scikit-learn parameter as a JSON object.
 
 ### Build a pipeline (preprocess → model in one artifact)
@@ -140,7 +140,7 @@ without leakage, and you score it with the **same `predict`** (no separate apply
 
 ```sql
 SELECT model_name, estimator, n_features
-FROM sklearn.fit_pipeline(
+FROM sklearn.models.fit_pipeline(
   (SELECT tenure, monthly_spend, support_tickets, churned FROM churn),
   steps := '[{"kind": "simple_imputer", "params": {"strategy": "median"}},
              {"kind": "standard_scaler"},
@@ -148,7 +148,7 @@ FROM sklearn.fit_pipeline(
   estimator := 'logistic_regression', target := 'churned', model_name := 'churn_pipe');
 
 -- predict (and cross_val_predict, permutation_importance, ...) work as usual
-SELECT * FROM sklearn.predict((SELECT * FROM new_customers), model_name := 'churn_pipe', id := 'customer_id');
+SELECT * FROM sklearn.models.predict((SELECT * FROM new_customers), model_name := 'churn_pipe', id := 'customer_id');
 ```
 
 `steps` is a JSON array of `{kind, params}`; `kind` is any stored-transformer kind
@@ -167,7 +167,7 @@ and appends `prediction`:
 ```sql
 -- from a registry model by name
 SELECT customer_id, prediction
-FROM sklearn.predict(
+FROM sklearn.models.predict(
   (SELECT customer_id, tenure, monthly_spend, support_tickets FROM churn),
   model_name := 'churn_gb', id := 'customer_id');
 ```
@@ -177,7 +177,7 @@ Add `with_proba := true` to also get one probability column per class
 
 ```sql
 SELECT customer_id, prediction, proba_1 AS churn_probability
-FROM sklearn.predict(
+FROM sklearn.models.predict(
   (SELECT customer_id, tenure, monthly_spend, support_tickets FROM churn),
   model_name := 'churn_gb', id := 'customer_id', with_proba := true)
 WHERE proba_1 > 0.5;
@@ -190,8 +190,8 @@ that didn't see it — which you then compare to the truth with the metric
 functions:
 
 ```sql
-SELECT sklearn.accuracy_score(c.churned, p.prediction) AS cv_accuracy
-FROM sklearn.cross_val_predict(
+SELECT sklearn.metrics.accuracy_score(c.churned, p.prediction) AS cv_accuracy
+FROM sklearn.models.cross_val_predict(
        (SELECT customer_id, tenure, monthly_spend, support_tickets, churned FROM churn),
        estimator := 'gradient_boosting_classifier', target := 'churned', id := 'customer_id', cv := 5) p
 JOIN churn c ON c.customer_id = p.customer_id;
@@ -202,7 +202,7 @@ row per fold:
 
 ```sql
 SELECT avg(score) AS mean_cv, stddev(score) AS sd
-FROM sklearn.cross_val_score(
+FROM sklearn.models.cross_val_score(
        (SELECT tenure, monthly_spend, support_tickets, churned FROM churn),
        estimator := 'gradient_boosting_classifier', target := 'churned', cv := 5);
 ```
@@ -214,7 +214,7 @@ the cross-validation in pure SQL — train on `fold <> f`, test on `fold = f`:
 ```sql
 -- attach a stratified fold id to every row, then evaluate however you like
 WITH folds AS (
-  SELECT * FROM sklearn.stratified_kfold(
+  SELECT * FROM sklearn.models.stratified_kfold(
     (SELECT customer_id, churned FROM churn), id := 'customer_id', label := 'churned', n_splits := 5))
 SELECT fold, count(*) FROM folds GROUP BY fold ORDER BY fold;
 ```
@@ -226,7 +226,7 @@ stored model's score — model-agnostic, so it works for any estimator:
 
 ```sql
 SELECT feature, round(importance_mean, 4) AS importance
-FROM sklearn.permutation_importance(
+FROM sklearn.models.permutation_importance(
        (SELECT * FROM churn), model_name := 'churn_gb', target := 'churned')
 ORDER BY importance DESC;
 ```
@@ -237,7 +237,7 @@ target (ANOVA F, mutual information, or chi²) and flags the top `k`;
 feature, so you pick the winners in SQL:
 
 ```sql
-SELECT feature FROM sklearn.select_k_best(
+SELECT feature FROM sklearn.preprocessing.select_k_best(
          (SELECT tenure, monthly_spend, support_tickets, churned FROM churn),
          target := 'churned', k := 2)
 WHERE selected;
@@ -252,7 +252,7 @@ join, or rank in SQL:
 ```sql
 -- the 5 highest-weighted terms per document
 SELECT id, term, value
-FROM sklearn.tfidf_vectorizer((SELECT id, body FROM docs), id := 'id', text := 'body')
+FROM sklearn.preprocessing.tfidf_vectorizer((SELECT id, body FROM docs), id := 'id', text := 'body')
 QUALIFY row_number() OVER (PARTITION BY id ORDER BY value DESC) <= 5;
 ```
 
@@ -265,7 +265,7 @@ see the hyperparameters that estimator actually has:
 
 ```sql
 SELECT params, round(mean_test_score, 3) AS score, rank
-FROM sklearn.grid_search(
+FROM sklearn.models.grid_search(
   (SELECT tenure, monthly_spend, support_tickets, churned FROM churn),
   target := 'churned',
   estimator := union_value(gradient_boosting_classifier := {
@@ -281,14 +281,14 @@ it with `WHERE model IS NOT NULL`, or pass `model_name :=` to also store it:
 
 ```sql
 CREATE TABLE best AS
-SELECT model FROM sklearn.grid_search(
+SELECT model FROM sklearn.models.grid_search(
   (SELECT tenure, monthly_spend, support_tickets, churned FROM churn),
   target := 'churned',
   estimator := union_value(svc := {'C': [0.1, 1, 10], 'kernel': ['rbf', 'linear']}))
 WHERE model IS NOT NULL;
 
 SET VARIABLE m = (SELECT model FROM best);
-SELECT * FROM sklearn.predict((SELECT * FROM new_customers), model := getvariable('m'), id := 'customer_id');
+SELECT * FROM sklearn.models.predict((SELECT * FROM new_customers), model := getvariable('m'), id := 'customer_id');
 ```
 
 > `grid_search` uses union-typed arguments and needs a vgi-python with
@@ -306,7 +306,7 @@ named `STRUCT`; the target can be numeric **or** string class labels.
 -- one churn model per segment
 CREATE TABLE segment_models AS
 SELECT (customer_id % 3) AS segment,       -- use your real segment column
-       sklearn.fit_model({'tenure': tenure, 'monthly_spend': monthly_spend, 'support_tickets': support_tickets},
+       sklearn.models.fit_model({'tenure': tenure, 'monthly_spend': monthly_spend, 'support_tickets': support_tickets},
                          churned, estimator := 'gradient_boosting_classifier', hyperparams := '{}') AS m
 FROM churn
 GROUP BY segment;
@@ -321,7 +321,7 @@ scored by *its* group's model via a plain join:
 
 ```sql
 SELECT c.customer_id,
-       sklearn.predict_class_one(m.m.model,
+       sklearn.models.predict_class_one(m.m.model,
          {'tenure': c.tenure, 'monthly_spend': c.monthly_spend, 'support_tickets': c.support_tickets}) AS prediction
 FROM churn c
 JOIN segment_models m ON (c.customer_id % 3) = m.segment;
@@ -344,12 +344,12 @@ table of `(actual, predicted)` and group however you like:
 
 ```sql
 -- one score, or one per segment/model with GROUP BY
-SELECT sklearn.r2_score(actual, predicted) AS r2,
-       sklearn.mean_absolute_error(actual, predicted) AS mae
+SELECT sklearn.metrics.r2_score(actual, predicted) AS r2,
+       sklearn.metrics.mean_absolute_error(actual, predicted) AS mae
 FROM my_predictions;
 
 -- a full confusion matrix in long form
-SELECT * FROM sklearn.confusion_matrix(
+SELECT * FROM sklearn.metrics.confusion_matrix(
   (SELECT label AS y, predicted AS yhat FROM my_predictions),
   actual := 'y', predicted := 'yhat');
 ```
@@ -361,16 +361,16 @@ All transforms take your table as a subquery, carry `id` through, and run
 
 ```sql
 -- standardize features (zero mean, unit variance)
-SELECT * FROM sklearn.standard_scaler(
+SELECT * FROM sklearn.preprocessing.standard_scaler(
   (SELECT customer_id, tenure, monthly_spend, support_tickets FROM churn), id := 'customer_id');
 
 -- reduce to 2 components for plotting
-SELECT * FROM sklearn.pca(
+SELECT * FROM sklearn.preprocessing.pca(
   (SELECT customer_id, tenure, monthly_spend, support_tickets FROM churn),
   id := 'customer_id', n_components := 2);
 
 -- fill missing values before modeling
-SELECT * FROM sklearn.simple_imputer((SELECT ...), id := 'id', strategy := 'median');
+SELECT * FROM sklearn.preprocessing.simple_imputer((SELECT ...), id := 'id', strategy := 'median');
 ```
 
 Transforms compose — pipe one into the next as nested subqueries (scale, then
@@ -383,12 +383,12 @@ analogue of `fit` / `predict`):
 
 ```sql
 -- fit a scaler on training data and store it
-SELECT * FROM sklearn.fit_transformer(
+SELECT * FROM sklearn.preprocessing.fit_transformer(
   (SELECT tenure, monthly_spend, support_tickets FROM churn_train),
   transformer_name := 'churn_scaler', kind := 'standard_scaler');
 
 -- apply the stored scaler to new data (uses the training mean/variance)
-SELECT * FROM sklearn.apply_transform(
+SELECT * FROM sklearn.preprocessing.apply_transform(
   (SELECT customer_id, tenure, monthly_spend, support_tickets FROM churn_new),
   transformer_name := 'churn_scaler', id := 'customer_id');
 ```
@@ -410,11 +410,11 @@ of a wide one-hot:
 
 ```sql
 -- integer codes, one column per categorical feature
-SELECT * FROM sklearn.ordinal_encoder(
+SELECT * FROM sklearn.preprocessing.ordinal_encoder(
   (SELECT customer_id, plan, region FROM customers), id := 'customer_id');
 
 -- one row per active category; pivot it back to a wide matrix in SQL
-PIVOT sklearn.one_hot_encoder(
+PIVOT sklearn.preprocessing.one_hot_encoder(
         (SELECT customer_id, plan FROM customers), id := 'customer_id')
   ON category USING sum(value) GROUP BY customer_id;
 ```
@@ -427,13 +427,13 @@ A `NULL`/unseen value encodes to `-1` (ordinal) or contributes no active cell
 ```sql
 -- k-means: appends a `cluster` label per row
 SELECT customer_id, cluster
-FROM sklearn.kmeans(
+FROM sklearn.preprocessing.kmeans(
   (SELECT customer_id, tenure, monthly_spend, support_tickets FROM churn),
   id := 'customer_id', n_clusters := 4);
 
 -- isolation forest: appends `anomaly_score` and `is_outlier`
 SELECT customer_id, anomaly_score
-FROM sklearn.isolation_forest(
+FROM sklearn.preprocessing.isolation_forest(
   (SELECT customer_id, tenure, monthly_spend, support_tickets FROM churn),
   id := 'customer_id', contamination := 0.05)
 WHERE is_outlier = 1;
@@ -445,8 +445,8 @@ scikit-learn's bundled datasets are table functions — handy for trying things 
 building demos:
 
 ```sql
-SELECT * FROM sklearn.iris();
-SELECT * FROM sklearn.make_blobs(n_samples := 300, centers := 4);   -- synthetic clusters
+SELECT * FROM sklearn.datasets.iris();
+SELECT * FROM sklearn.datasets.make_blobs(n_samples := 300, centers := 4);   -- synthetic clusters
 ```
 
 ---
@@ -509,8 +509,8 @@ by-name features).
 **Metrics over a table:** `confusion_matrix` (long format), `silhouette_score`,
 and the binary curves `roc_curve`, `precision_recall_curve`, `calibration_curve`.
 
-**Manage the registry:** `SELECT * FROM sklearn.list_models();`,
-`sklearn.model_info('name')`, `sklearn.drop_model('name')`.
+**Manage the registry:** `SELECT * FROM sklearn.models.list_models();`,
+`sklearn.models.model_info('name')`, `sklearn.models.drop_model('name')`.
 
 ---
 
@@ -526,12 +526,12 @@ allowed subquery, so the model scalar comes through `getvariable`):
 ```sql
 CREATE TABLE models AS
   SELECT 'churn_gb' AS name, model
-  FROM sklearn.fit_gradient_boosting_classifier(
+  FROM sklearn.estimators.fit_gradient_boosting_classifier(
     (SELECT tenure, monthly_spend, support_tickets, churned FROM churn),
     target := 'churned');
 
 SET VARIABLE m = (SELECT model FROM models WHERE name = 'churn_gb');
-SELECT * FROM sklearn.predict((SELECT * FROM churn), model := getvariable('m'), id := 'customer_id');
+SELECT * FROM sklearn.models.predict((SELECT * FROM churn), model := getvariable('m'), id := 'customer_id');
 ```
 
 **In the named registry.** Pass `model_name` to `fit_…`, then reference it by

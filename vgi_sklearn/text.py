@@ -8,7 +8,7 @@ back to a wide matrix, join term weights, or aggregate per document.
 
     -- top terms per document
     SELECT id, term, value
-    FROM sklearn.tfidf_vectorizer((SELECT id, body FROM docs), id := 'id', text := 'body')
+    FROM sklearn.preprocessing.tfidf_vectorizer((SELECT id, body FROM docs), id := 'id', text := 'body')
     QUALIFY row_number() OVER (PARTITION BY id ORDER BY value DESC) <= 5;
 
 Both buffer the whole corpus (the vocabulary -- and idf, for tf-idf -- need every
@@ -182,18 +182,41 @@ class CountVectorizerFn(_Vectorizer):
         categories = ["preprocessing", "text", "encoding"]
         examples = [
             FunctionExample(
-                sql=("SELECT * FROM sklearn.count_vectorizer((SELECT id, body FROM docs), id := 'id', text := 'body')"),
+                sql=(
+                    "SELECT * FROM sklearn.preprocessing.count_vectorizer((SELECT id, body FROM docs), id := 'id', text := 'body')"  # noqa: E501
+                ),
                 description="Term counts per document",
             )
         ]
         tags = {
-            "vgi.columns_md": columns_md_rows(
+            "vgi.result_columns_md": columns_md_rows(
                 [
                     ("term", "VARCHAR", "Vocabulary term (or n-gram)."),
                     ("value", "BIGINT", "Term count in the document."),
                 ],
                 note=_VECTORIZER_ID_NOTE,
-            )
+            ),
+            "vgi.doc_llm": (
+                "Table function wrapping scikit-learn's `CountVectorizer`: tokenizes a text column and "
+                "emits the document-term count matrix in long (sparse) format, one row per non-zero cell. "
+                "The table arg is `(SELECT id_col, text_col FROM ...)`; `text :=` names the string column "
+                "(defaults to the single non-id column) and `id :=` an optional id carried onto each row. "
+                "Tokenization is tunable via `lowercase`, `stop_words` ('english'), `ngram_max`, `min_df`, "
+                "`max_df`, and `max_features`. Returns `(id?, term, value)` where `value` is the integer "
+                "term frequency in that document — pivot back to a wide bag-of-words matrix or aggregate "
+                "per term. Buffers the whole corpus so the vocabulary is learned across all documents."
+            ),
+            "vgi.doc_md": (
+                "**Count vectorizer (bag of words)** — text column to a long document-term count matrix.\n\n"
+                "- Table arg: `(SELECT id, text FROM ...)`; `text :=` the string column, `id :=` an "
+                "optional carried id\n"
+                "- Tuning args: `lowercase`, `stop_words` ('english'), `ngram_max`, `min_df`, `max_df`, "
+                "`max_features`\n"
+                "- Returns one row per non-zero cell (plus the carried `id` if given):\n"
+                "  - `term` — a vocabulary token or n-gram\n"
+                "  - `value` (`BIGINT`) — how many times the term occurs in the document\n"
+                "- Long/sparse shape avoids a data-dependent column width; `PIVOT` for a wide matrix"
+            ),
         }
 
     @classmethod
@@ -217,18 +240,44 @@ class TfidfVectorizerFn(_Vectorizer):
         categories = ["preprocessing", "text", "encoding"]
         examples = [
             FunctionExample(
-                sql=("SELECT * FROM sklearn.tfidf_vectorizer((SELECT id, body FROM docs), id := 'id', text := 'body')"),
+                sql=(
+                    "SELECT * FROM sklearn.preprocessing.tfidf_vectorizer((SELECT id, body FROM docs), id := 'id', text := 'body')"  # noqa: E501
+                ),
                 description="TF-IDF weights per document",
             )
         ]
         tags = {
-            "vgi.columns_md": columns_md_rows(
+            "vgi.result_columns_md": columns_md_rows(
                 [
                     ("term", "VARCHAR", "Vocabulary term (or n-gram)."),
                     ("value", "DOUBLE", "TF-IDF weight of the term in the document."),
                 ],
                 note=_VECTORIZER_ID_NOTE,
-            )
+            ),
+            "vgi.doc_llm": (
+                "Table function wrapping scikit-learn's `TfidfVectorizer`: tokenizes a text column and "
+                "emits the TF-IDF document-term matrix in long (sparse) format, one row per non-zero cell. "
+                "The table arg is `(SELECT id_col, text_col FROM ...)`; `text :=` names the string column "
+                "(defaults to the single non-id column) and `id :=` an optional id carried onto each row. "
+                "Same tokenization knobs as the count vectorizer (`lowercase`, `stop_words`, `ngram_max`, "
+                "`min_df`, `max_df`, `max_features`). Returns `(id?, term, value)` where `value` is the "
+                "TF-IDF weight — term frequency scaled down by how common the term is across the corpus, so "
+                "rare-but-present terms score higher. Buffers the whole corpus because the IDF is global; "
+                "great for top-keyword extraction per document."
+            ),
+            "vgi.doc_md": (
+                "**TF-IDF vectorizer** — text column to a long document-term TF-IDF matrix.\n\n"
+                "- Table arg: `(SELECT id, text FROM ...)`; `text :=` the string column, `id :=` an "
+                "optional carried id\n"
+                "- Tuning args: `lowercase`, `stop_words` ('english'), `ngram_max`, `min_df`, `max_df`, "
+                "`max_features`\n"
+                "- Returns one row per non-zero cell (plus the carried `id` if given):\n"
+                "  - `term` — a vocabulary token or n-gram\n"
+                "  - `value` (`DOUBLE`) — TF-IDF weight (term frequency downweighted by corpus-wide "
+                "document frequency)\n"
+                "- Unlike raw counts it discounts ubiquitous words, so the highest-`value` terms per "
+                "document are its distinctive keywords"
+            ),
         }
 
     @classmethod

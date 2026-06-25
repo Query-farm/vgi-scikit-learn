@@ -14,12 +14,12 @@ segment" research:
 
     -- a model per region
     CREATE TABLE models AS
-      SELECT region, sklearn.fit_model({'tenure': tenure, 'spend': spend}, churned,
+      SELECT region, sklearn.models.fit_model({'tenure': tenure, 'spend': spend}, churned,
                                        estimator := 'gradient_boosting_classifier') AS m
       FROM customers GROUP BY region;
 
     -- score each customer with their region's model
-    SELECT c.id, sklearn.predict_class_one(m.m.model, {'tenure': c.tenure, 'spend': c.spend})
+    SELECT c.id, sklearn.models.predict_class_one(m.m.model, {'tenure': c.tenure, 'spend': c.spend})
     FROM customers c JOIN models m USING (region);
 
 Features are passed as a ``STRUCT`` (named, so alignment is by name), the target
@@ -137,10 +137,34 @@ class FitModel(AggregateFunction[FitState]):
         name = "fit_model"
         description = "Fit one model per group (aggregate); returns the model BLOB + diagnostics"
         categories = ["models", "supervised", "grouped"]
+        tags = {
+            "vgi.doc_llm": (
+                "Aggregate function that fits one estimator **per `GROUP BY` group** and returns a `STRUCT` "
+                "(the model as a BLOB plus diagnostics: `estimator`, `task`, `n_samples`, `n_features`, "
+                "`n_classes`, `train_score`) for each group. Pass a feature `STRUCT` (e.g. "
+                "`{'tenure': tenure, 'spend': spend}` — features align by name), then the `target` column (any "
+                "type: numeric for regression, numeric **or** string labels for classification, dtype "
+                "preserved), then `estimator :=` and the required `hyperparams :=` JSON (`'{}'` for defaults). "
+                "`GROUP BY` does the partitioning, so this is the way to build 'a model per segment'; score "
+                "the rows with the `predict_one`/`predict_class_one`/`predict_proba_one` scalars on the "
+                "returned `.model` BLOB."
+            ),
+            "vgi.doc_md": (
+                "**fit_model** — fit a separate model for each `GROUP BY` group (an aggregate).\n\n"
+                "Buffers each group's rows, fits an estimator, and emits one result `STRUCT` per group; "
+                "`GROUP BY` supplies the partitioning that table functions cannot.\n\n"
+                "- Args: feature `STRUCT` (by-name alignment); `target` (numeric or string labels, dtype "
+                "preserved); `estimator :=` name; `hyperparams :=` JSON (**required**, pass `'{}'`)\n"
+                "- Returns per group: a `STRUCT(model BLOB, estimator, task, n_samples, n_features, "
+                "n_classes, train_score)`\n"
+                "- The per-segment modeling entry point; feed the `.model` BLOB to `predict_one` / "
+                "`predict_class_one` / `predict_proba_one` to score rows with their group's model"
+            ),
+        }
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT region, sklearn.fit_model("
+                    "SELECT region, sklearn.models.fit_model("
                     "{'tenure': tenure, 'spend': spend}, churned, "
                     "estimator := 'gradient_boosting_classifier', hyperparams := '{}') AS m "
                     "FROM customers GROUP BY region"
@@ -309,10 +333,31 @@ class PredictOne(ScalarFunction):
         name = "predict_one"
         description = "Score a row through a model BLOB; returns a numeric prediction"
         categories = ["models", "inference", "grouped"]
+        tags = {
+            "vgi.doc_llm": (
+                "Scalar function that scores one row through a per-row model BLOB and returns a `DOUBLE` "
+                "prediction — for regression, or numeric class labels. Pass the `model` BLOB (column 1, "
+                "typically `m.m.model` from a `fit_model` join, so each row uses its own group's model) and a "
+                "feature `STRUCT` (column 2; fields align to the model's features by name, extras ignored). "
+                "Because it is a scalar it composes in any `SELECT`/join — the usual pattern joins rows to a "
+                "per-group models table and scores each with its group's model. Loading is cached by BLOB "
+                "identity, so a shared model deserializes once. Use `predict_class_one` for string labels or "
+                "`predict_proba_one` for probabilities."
+            ),
+            "vgi.doc_md": (
+                "**predict_one** — score a row with a model BLOB, returning a numeric prediction.\n\n"
+                "- Args: `model` BLOB (per-row, e.g. from a `fit_model` join); feature `STRUCT` (by-name "
+                "alignment, extra fields ignored)\n"
+                "- Returns: a `DOUBLE` prediction per row (regression or numeric class labels)\n"
+                "- A scalar, so it joins each row to its group's model and scores it inline; rows sharing a "
+                "BLOB deserialize it once — use `predict_class_one`/`predict_proba_one` for text labels or "
+                "class probabilities"
+            ),
+        }
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT sklearn.predict_one(m.m.model, {'tenure': c.tenure, 'spend': c.spend}) "
+                    "SELECT sklearn.models.predict_one(m.m.model, {'tenure': c.tenure, 'spend': c.spend}) "
                     "FROM customers c JOIN models m USING (region)"
                 ),
                 description="Score each customer with their group's regression model",
@@ -339,10 +384,29 @@ class PredictClassOne(ScalarFunction):
         name = "predict_class_one"
         description = "Score a row through a classifier BLOB; returns the class label as text"
         categories = ["models", "inference", "grouped"]
+        tags = {
+            "vgi.doc_llm": (
+                "Scalar function that scores one row through a per-row classifier model BLOB and returns the "
+                "predicted class label **as text** (`VARCHAR`) — so it works for string class labels that "
+                "`predict_one` (numeric only) cannot represent. Pass the `model` BLOB (column 1, usually "
+                "`m.m.model` from a `fit_model` join) and a feature `STRUCT` (column 2; fields align by name). "
+                "Returns one label string per row; loading is cached by BLOB identity. Use it in the "
+                "per-group join pattern when each segment's classifier emits string labels; for raw "
+                "per-class probabilities use `predict_proba_one`."
+            ),
+            "vgi.doc_md": (
+                "**predict_class_one** — score a row with a classifier BLOB, returning the label as text.\n\n"
+                "- Args: `model` BLOB (per-row, e.g. from a `fit_model` join); feature `STRUCT` (by-name "
+                "alignment)\n"
+                "- Returns: the predicted class label as `VARCHAR` per row\n"
+                "- The string-label counterpart to `predict_one` (which is numeric-only), so it preserves "
+                "text classes; pair with `predict_proba_one` when you need per-class probabilities"
+            ),
+        }
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT sklearn.predict_class_one(m.m.model, {'tenure': c.tenure, 'spend': c.spend}) "
+                    "SELECT sklearn.models.predict_class_one(m.m.model, {'tenure': c.tenure, 'spend': c.spend}) "
                     "FROM customers c JOIN models m USING (region)"
                 ),
                 description="Predict each customer's class label with their group's classifier",
@@ -369,10 +433,28 @@ class PredictProbaOne(ScalarFunction):
         name = "predict_proba_one"
         description = "Class probabilities for a row through a classifier BLOB (DOUBLE[])"
         categories = ["models", "inference", "grouped"]
+        tags = {
+            "vgi.doc_llm": (
+                "Scalar function that scores one row through a per-row classifier model BLOB and returns the "
+                "per-class probabilities as a `DOUBLE[]` (a list), ordered by the model's own class order. "
+                "Pass the `model` BLOB (column 1, e.g. `m.m.model` from a `fit_model` join) and a feature "
+                "`STRUCT` (column 2; fields align by name). Use it when you need confidences rather than a "
+                "single label — index or `unnest` the array to get individual `P(class)` values; loading is "
+                "cached by BLOB identity. Use `predict_class_one` if you only need the hard label."
+            ),
+            "vgi.doc_md": (
+                "**predict_proba_one** — per-class probabilities for a row through a classifier BLOB.\n\n"
+                "- Args: `model` BLOB (per-row, e.g. from a `fit_model` join); feature `STRUCT` (by-name "
+                "alignment)\n"
+                "- Returns: a `DOUBLE[]` of probabilities in the model's class order, one per row\n"
+                "- For confidence/soft outputs rather than a hard label (`predict_class_one`); `unnest` or "
+                "index the array to pull out individual `P(class)` values"
+            ),
+        }
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT sklearn.predict_proba_one(m.m.model, {'tenure': c.tenure, 'spend': c.spend}) "
+                    "SELECT sklearn.models.predict_proba_one(m.m.model, {'tenure': c.tenure, 'spend': c.spend}) "
                     "FROM customers c JOIN models m USING (region)"
                 ),
                 description="Per-class probabilities from each customer's group classifier",

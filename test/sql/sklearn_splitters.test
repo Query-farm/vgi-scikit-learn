@@ -12,13 +12,13 @@ statement ok
 ATTACH 'sklearn' AS sklearn (TYPE vgi, LOCATION '${VGI_SKLEARN_WORKER}');
 
 statement ok
-CREATE TEMP VIEW iris AS SELECT * FROM sklearn.iris();
+CREATE TEMP VIEW iris AS SELECT * FROM sklearn.datasets.iris();
 
 # ---- kfold: every row gets exactly one fold in [0, n_splits) ----
 
 query IIII
 SELECT count(*), count(DISTINCT fold), min(fold), max(fold)
-FROM sklearn.kfold((SELECT sample_id FROM iris), id := 'sample_id', n_splits := 5);
+FROM sklearn.models.kfold((SELECT sample_id FROM iris), id := 'sample_id', n_splits := 5);
 ----
 150	5	0	4
 
@@ -26,7 +26,7 @@ FROM sklearn.kfold((SELECT sample_id FROM iris), id := 'sample_id', n_splits := 
 query I
 SELECT count(DISTINCT cnt) FROM (
   SELECT fold, count(*) AS cnt
-  FROM sklearn.kfold((SELECT sample_id FROM iris), id := 'sample_id', n_splits := 5) GROUP BY fold);
+  FROM sklearn.models.kfold((SELECT sample_id FROM iris), id := 'sample_id', n_splits := 5) GROUP BY fold);
 ----
 1
 
@@ -35,7 +35,7 @@ SELECT count(DISTINCT cnt) FROM (
 query I
 SELECT bool_and(n = 10) FROM (
   SELECT k.fold, i.target, count(*) AS n
-  FROM sklearn.stratified_kfold((SELECT sample_id, target FROM iris), id := 'sample_id', label := 'target', n_splits := 5) k
+  FROM sklearn.models.stratified_kfold((SELECT sample_id, target FROM iris), id := 'sample_id', label := 'target', n_splits := 5) k
   JOIN iris i USING (sample_id)
   GROUP BY k.fold, i.target);
 ----
@@ -46,7 +46,7 @@ true
 query I
 SELECT bool_and(n_folds = 1) FROM (
   SELECT i.target, count(DISTINCT k.fold) AS n_folds
-  FROM sklearn.group_kfold((SELECT sample_id, target AS grp FROM iris), id := 'sample_id', group_col := 'grp', n_splits := 3) k
+  FROM sklearn.models.group_kfold((SELECT sample_id, target AS grp FROM iris), id := 'sample_id', group_col := 'grp', n_splits := 3) k
   JOIN iris i USING (sample_id)
   GROUP BY i.target);
 ----
@@ -58,7 +58,7 @@ query III
 SELECT count(DISTINCT split),
        count(*) FILTER (WHERE role = 'train') > 0,
        count(*) FILTER (WHERE role = 'test') > 0
-FROM sklearn.timeseries_split((SELECT sample_id FROM iris ORDER BY sample_id), id := 'sample_id', n_splits := 5);
+FROM sklearn.models.timeseries_split((SELECT sample_id FROM iris ORDER BY sample_id), id := 'sample_id', n_splits := 5);
 ----
 5	true	true
 
@@ -67,7 +67,7 @@ SELECT bool_and(max_train < min_test) FROM (
   SELECT split,
          max(sample_id) FILTER (WHERE role = 'train') AS max_train,
          min(sample_id) FILTER (WHERE role = 'test') AS min_test
-  FROM sklearn.timeseries_split((SELECT sample_id FROM iris ORDER BY sample_id), id := 'sample_id', n_splits := 5)
+  FROM sklearn.models.timeseries_split((SELECT sample_id FROM iris ORDER BY sample_id), id := 'sample_id', n_splits := 5)
   GROUP BY split);
 ----
 true
@@ -75,7 +75,7 @@ true
 # ---- omitting id is a clear error ----
 
 statement error
-SELECT * FROM sklearn.kfold((SELECT sample_id FROM iris));
+SELECT * FROM sklearn.models.kfold((SELECT sample_id FROM iris));
 ----
 requires 'id'
 

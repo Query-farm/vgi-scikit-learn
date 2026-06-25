@@ -8,8 +8,8 @@ Two families:
   ``make_blobs()``, ``make_moons()``, ``make_circles()``. Their column count
   depends on arguments, so they build their schema in ``on_bind``.
 
-    SELECT * FROM sklearn.iris();
-    SELECT * FROM sklearn.make_blobs(n_samples => 300, centers => 4);
+    SELECT * FROM sklearn.datasets.iris();
+    SELECT * FROM sklearn.datasets.make_blobs(n_samples => 300, centers => 4);
 """
 
 from __future__ import annotations
@@ -172,11 +172,29 @@ class IrisFunction(_ToyDataset):
         description = "Fisher's iris dataset (150 samples, 4 features, 3 species)"
         categories = ["datasets", "classification"]
         projection_pushdown = True
-        tags = {"vgi.columns_md": columns_md(_IRIS_SCHEMA)}
+        tags = {
+            "vgi.result_columns_md": columns_md(_IRIS_SCHEMA),
+            "vgi.doc_llm": (
+                "Zero-argument table function returning Fisher's classic iris dataset: 150 rows, 4 numeric "
+                "flower measurements (`sepal_length_cm`, `sepal_width_cm`, `petal_length_cm`, "
+                "`petal_width_cm`), an integer `target` (0/1/2), a human-readable `target_name` species, and a "
+                "0-based `sample_id`. Call it as `SELECT * FROM sklearn.datasets.iris()` (no args) — it is the default "
+                "demo input for nearly every other function here (fit/predict, scalers, clustering). Use it as "
+                "a small, well-separated 3-class benchmark for classification or to smoke-test a pipeline."
+            ),
+            "vgi.doc_md": (
+                "**Iris dataset** — 150 flowers, 4 measurements, 3 species (the canonical ML toy set).\n\n"
+                "- `sample_id` INTEGER — 0-based row index\n"
+                "- four `*_cm` DOUBLE feature columns (sepal/petal length & width)\n"
+                "- `target` INTEGER (0-2) and `target_name` the species name\n"
+                "- Takes no arguments; the go-to small, balanced 3-class classification demo and the input "
+                "used in most examples here"
+            ),
+        }
         examples = [
-            FunctionExample(sql="SELECT * FROM sklearn.iris()", description="Load the full iris dataset"),
+            FunctionExample(sql="SELECT * FROM sklearn.datasets.iris()", description="Load the full iris dataset"),
             FunctionExample(
-                sql="SELECT target_name, avg(petal_length_cm) FROM sklearn.iris() GROUP BY target_name",
+                sql="SELECT target_name, avg(petal_length_cm) FROM sklearn.datasets.iris() GROUP BY target_name",
                 description="Mean petal length per species",
             ),
         ]
@@ -197,8 +215,25 @@ class WineFunction(_ToyDataset):
         description = "Wine recognition dataset (178 samples, 13 features, 3 classes)"
         categories = ["datasets", "classification"]
         projection_pushdown = True
-        tags = {"vgi.columns_md": columns_md(_WINE_SCHEMA)}
-        examples = [FunctionExample(sql="SELECT * FROM sklearn.wine()", description="Load the wine dataset")]
+        tags = {
+            "vgi.result_columns_md": columns_md(_WINE_SCHEMA),
+            "vgi.doc_llm": (
+                "Zero-argument table function returning the wine-recognition dataset: 178 rows of 13 numeric "
+                "chemical-analysis features (alcohol, malic acid, flavanoids, etc.), an integer `target` "
+                "cultivar (0/1/2), a `target_name`, and a 0-based `sample_id`. Call it as "
+                "`SELECT * FROM sklearn.datasets.wine()` with no arguments. It is a small all-numeric 3-class "
+                "classification benchmark whose features live on very different scales, so it is a good demo "
+                "for `standard_scaler` followed by a classifier."
+            ),
+            "vgi.doc_md": (
+                "**Wine dataset** — 178 samples, 13 chemical features, 3 cultivars.\n\n"
+                "- `sample_id` INTEGER plus 13 DOUBLE feature columns (chemical measurements)\n"
+                "- `target` INTEGER (0-2) and `target_name` the cultivar name\n"
+                "- No arguments; an all-numeric multiclass benchmark whose unequal feature scales make it "
+                "a natural fit for scaling + classification pipelines"
+            ),
+        }
+        examples = [FunctionExample(sql="SELECT * FROM sklearn.datasets.wine()", description="Load the wine dataset")]
 
 
 @init_single_worker
@@ -216,8 +251,26 @@ class DigitsFunction(_ToyDataset):
         description = "Handwritten digits (1797 samples, 64 pixel features, 10 classes)"
         categories = ["datasets", "classification"]
         projection_pushdown = True
-        tags = {"vgi.columns_md": columns_md(_DIGITS_SCHEMA)}
-        examples = [FunctionExample(sql="SELECT * FROM sklearn.digits()", description="Load the digits dataset")]
+        tags = {
+            "vgi.result_columns_md": columns_md(_DIGITS_SCHEMA),
+            "vgi.doc_llm": (
+                "Zero-argument table function returning the handwritten-digits dataset: 1797 rows, 64 pixel "
+                "features (the flattened 8x8 grayscale image, values 0-16), an integer `target` digit (0-9), a "
+                "`target_name`, and a 0-based `sample_id`. Call it as `SELECT * FROM sklearn.datasets.digits()` with no "  # noqa: E501
+                "arguments. With 64 features and 10 classes it is the largest-dimensional toy set here — handy "
+                "for demonstrating dimensionality reduction (`pca`) or multiclass classifiers on image-like data."
+            ),
+            "vgi.doc_md": (
+                "**Digits dataset** — 1797 samples, 64 pixel features (8x8 images), 10 classes.\n\n"
+                "- `sample_id` INTEGER plus 64 DOUBLE pixel-intensity columns (0-16)\n"
+                "- `target` INTEGER (0-9, the digit) and `target_name`\n"
+                "- No arguments; the highest-dimensional toy set here — good for showcasing `pca`/SVD "
+                "reduction and 10-class classification"
+            ),
+        }
+        examples = [
+            FunctionExample(sql="SELECT * FROM sklearn.datasets.digits()", description="Load the digits dataset")
+        ]
 
 
 @init_single_worker
@@ -235,9 +288,28 @@ class BreastCancerFunction(_ToyDataset):
         description = "Breast cancer Wisconsin diagnostic (569 samples, 30 features, 2 classes)"
         categories = ["datasets", "classification"]
         projection_pushdown = True
-        tags = {"vgi.columns_md": columns_md(_CANCER_SCHEMA)}
+        tags = {
+            "vgi.result_columns_md": columns_md(_CANCER_SCHEMA),
+            "vgi.doc_llm": (
+                "Zero-argument table function returning the Breast Cancer Wisconsin diagnostic dataset: 569 "
+                "rows, 30 numeric features summarizing cell-nucleus measurements (mean/standard-error/worst of "
+                "radius, texture, etc.), a binary integer `target` (0 = malignant, 1 = benign), a "
+                "`target_name`, and a 0-based `sample_id`. Call it as `SELECT * FROM sklearn.datasets.breast_cancer()` "
+                "with no arguments. It is the standard binary-classification benchmark here, useful for "
+                "ROC/AUC, precision-recall, and probability-calibration demos."
+            ),
+            "vgi.doc_md": (
+                "**Breast cancer (Wisconsin diagnostic)** — 569 samples, 30 features, 2 classes.\n\n"
+                "- `sample_id` INTEGER plus 30 DOUBLE nucleus-measurement columns\n"
+                "- `target` INTEGER (0 malignant / 1 benign) and `target_name`\n"
+                "- No arguments; the canonical binary-classification toy set — ideal for ROC AUC, "
+                "precision/recall, and calibration examples"
+            ),
+        }
         examples = [
-            FunctionExample(sql="SELECT * FROM sklearn.breast_cancer()", description="Load the breast cancer dataset")
+            FunctionExample(
+                sql="SELECT * FROM sklearn.datasets.breast_cancer()", description="Load the breast cancer dataset"
+            )
         ]
 
 
@@ -264,10 +336,29 @@ class CaliforniaHousingFunction(TableFunctionGenerator[NoArgs]):
         description = "California housing prices (20640 districts, 8 features, regression)"
         categories = ["datasets", "regression", "fetched"]
         projection_pushdown = True
-        tags = {"vgi.columns_md": columns_md(_CALIFORNIA_SCHEMA)}
+        tags = {
+            "vgi.result_columns_md": columns_md(_CALIFORNIA_SCHEMA),
+            "vgi.doc_llm": (
+                "Zero-argument table function returning the California housing regression dataset: 20640 "
+                "census-block-group rows with 8 numeric features (`MedInc`, `HouseAge`, `AveRooms`, "
+                "`AveBedrms`, `Population`, `AveOccup`, `Latitude`, `Longitude`), a continuous `target` (median "
+                "house value in $100k), and a 0-based `sample_id`. Call it as "
+                "`SELECT * FROM sklearn.datasets.california_housing()` with no arguments; it is **downloaded from "
+                "scikit-learn on first use** and cached under the standard data home. The largest dataset here "
+                "and the main regression benchmark — good for regressors, geographic feature engineering, and "
+                "scaling demos."
+            ),
+            "vgi.doc_md": (
+                "**California housing** — 20640 districts, 8 features, a continuous regression target.\n\n"
+                "- `sample_id` INTEGER plus 8 DOUBLE features (income, house age, rooms, location, ...)\n"
+                "- `target` DOUBLE — median house value (units of $100,000)\n"
+                "- No arguments, but **downloaded and cached on first call**; the largest set here and the "
+                "primary regression benchmark"
+            ),
+        }
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.california_housing()",
+                sql="SELECT * FROM sklearn.datasets.california_housing()",
                 description="Load the California housing dataset (downloads on first use)",
             )
         ]
@@ -302,8 +393,27 @@ class DiabetesFunction(_ToyDataset):
         description = "Diabetes progression regression (442 samples, 10 features)"
         categories = ["datasets", "regression"]
         projection_pushdown = True
-        tags = {"vgi.columns_md": columns_md(_DIABETES_SCHEMA)}
-        examples = [FunctionExample(sql="SELECT * FROM sklearn.diabetes()", description="Load the diabetes dataset")]
+        tags = {
+            "vgi.result_columns_md": columns_md(_DIABETES_SCHEMA),
+            "vgi.doc_llm": (
+                "Zero-argument table function returning the diabetes-progression regression dataset: 442 rows, "
+                "10 mean-centered, scaled baseline features (age, sex, BMI, blood pressure, and six serum "
+                "measurements), a continuous `target` (disease progression one year later), and a 0-based "
+                "`sample_id`. Call it as `SELECT * FROM sklearn.datasets.diabetes()` with no arguments. It is a small, "
+                "already-standardized regression benchmark — convenient for linear/regularized regressors and "
+                "permutation-importance demos without any preprocessing."
+            ),
+            "vgi.doc_md": (
+                "**Diabetes dataset** — 442 samples, 10 baseline features, a continuous regression target.\n\n"
+                "- `sample_id` INTEGER plus 10 DOUBLE features (pre-standardized: age, sex, BMI, BP, serum)\n"
+                "- `target` DOUBLE — quantitative disease progression after one year\n"
+                "- No arguments; a compact regression benchmark whose features are already scaled, so it "
+                "drops straight into linear/regularized regressors"
+            ),
+        }
+        examples = [
+            FunctionExample(sql="SELECT * FROM sklearn.datasets.diabetes()", description="Load the diabetes dataset")
+        ]
 
 
 # ===========================================================================
@@ -334,17 +444,35 @@ class MakeClassificationFunction(TableFunctionGenerator[MakeClassificationArgs])
         categories = ["datasets", "synthetic", "classification"]
         projection_pushdown = True
         tags = {
-            "vgi.columns_md": columns_md_rows(
+            "vgi.result_columns_md": columns_md_rows(
                 [
                     ("sample_id", "INTEGER", "Row index within the generated sample (0-based)."),
                     ("target", "INTEGER", "Integer class label."),
                 ],
                 note="Plus one `feature_<i>` DOUBLE column per feature (count set by `n_features`).",
-            )
+            ),
+            "vgi.doc_llm": (
+                "Table function that generates a synthetic n-class classification problem on the fly (wraps "
+                "`make_classification`). Set `n_samples :=` rows (default 100), `n_features :=` total feature "
+                "count (default 20), `n_informative :=` how many actually drive the label, `n_classes :=` "
+                "(default 2), and `random_state :=` for reproducibility; the output schema is built at bind "
+                "from `n_features`. It emits a 0-based `sample_id`, one `feature_<i>` `DOUBLE` per feature, and "
+                "an integer `target`. Use it to fabricate labeled training data of a chosen size/shape for "
+                "testing classifiers, scaling, or CV without a real dataset."
+            ),
+            "vgi.doc_md": (
+                "**make_classification** — generate a random labeled classification dataset.\n\n"
+                "- `n_samples :=` rows (default 100); `n_features :=` total features (default 20); "
+                "`n_informative :=` label-driving features; `n_classes :=` classes (default 2); "
+                "`random_state :=` seed\n"
+                "- Output: `sample_id` INTEGER, one `feature_<i>` DOUBLE per feature, `target` INTEGER label\n"
+                "- Schema width follows `n_features`; the quick way to manufacture training data for "
+                "classifier/pipeline testing"
+            ),
         }
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.make_classification(n_samples => 500, n_features => 5, n_classes => 3)",
+                sql="SELECT * FROM sklearn.datasets.make_classification(n_samples => 500, n_features => 5, n_classes => 3)",  # noqa: E501
                 description="500 rows, 5 features, 3 classes",
             )
         ]
@@ -406,17 +534,36 @@ class MakeRegressionFunction(TableFunctionGenerator[MakeRegressionArgs]):
         categories = ["datasets", "synthetic", "regression"]
         projection_pushdown = True
         tags = {
-            "vgi.columns_md": columns_md_rows(
+            "vgi.result_columns_md": columns_md_rows(
                 [
                     ("sample_id", "INTEGER", "Row index within the generated sample (0-based)."),
                     ("target", "DOUBLE", "Continuous regression target."),
                 ],
                 note="Plus one `feature_<i>` DOUBLE column per feature (count set by `n_features`).",
-            )
+            ),
+            "vgi.doc_llm": (
+                "Table function that generates a synthetic linear regression problem (wraps "
+                "`make_regression`): the continuous `target` is a linear combination of the informative "
+                "features plus optional Gaussian noise. Set `n_samples :=` rows (default 100), `n_features :=` "
+                "total features (default 20), `n_informative :=` how many contribute to the target (default "
+                "10), `noise :=` the output noise std-dev (default 0), and `random_state :=`; the schema is "
+                "built at bind from `n_features`. Emits a 0-based `sample_id`, `feature_<i>` `DOUBLE` columns, "
+                "and a `DOUBLE` `target`. Use it to fabricate regression training data of a chosen size and "
+                "signal-to-noise level."
+            ),
+            "vgi.doc_md": (
+                "**make_regression** — generate a random linear-regression dataset.\n\n"
+                "- `n_samples :=` rows (default 100); `n_features :=` total (default 20); `n_informative :=` "
+                "target-driving features (default 10); `noise :=` output noise std-dev (default 0); "
+                "`random_state :=` seed\n"
+                "- Output: `sample_id` INTEGER, one `feature_<i>` DOUBLE per feature, `target` DOUBLE\n"
+                "- Schema width follows `n_features`; `noise` tunes the signal-to-noise ratio for testing "
+                "regressors"
+            ),
         }
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.make_regression(n_samples => 500, n_features => 4, noise => 5.0)",
+                sql="SELECT * FROM sklearn.datasets.make_regression(n_samples => 500, n_features => 4, noise => 5.0)",
                 description="500 rows, 4 features, noisy target",
             )
         ]
@@ -473,17 +620,35 @@ class MakeBlobsFunction(TableFunctionGenerator[MakeBlobsArgs]):
         categories = ["datasets", "synthetic", "clustering"]
         projection_pushdown = True
         tags = {
-            "vgi.columns_md": columns_md_rows(
+            "vgi.result_columns_md": columns_md_rows(
                 [
                     ("sample_id", "INTEGER", "Row index within the generated sample (0-based)."),
                     ("cluster", "INTEGER", "Ground-truth cluster index."),
                 ],
                 note="Plus one `feature_<i>` DOUBLE column per feature (count set by `n_features`).",
-            )
+            ),
+            "vgi.doc_llm": (
+                "Table function that generates isotropic Gaussian blobs for clustering (wraps `make_blobs`): "
+                "points are drawn around `centers :=` cluster centers (default 3) with spread `cluster_std :=` "
+                "(default 1.0). Set `n_samples :=` rows (default 100), `n_features :=` dimensions (default 2, "
+                "so it plots in 2-D), and `random_state :=`; the schema is built at bind from `n_features`. "
+                "Unlike the classification generators it emits a ground-truth `cluster` index (not `target`) "
+                "alongside `sample_id` and the `feature_<i>` columns. Use it to demo and validate clustering "
+                "(`kmeans`, `dbscan`) where you know the true grouping."
+            ),
+            "vgi.doc_md": (
+                "**make_blobs** — generate Gaussian blobs with known cluster labels.\n\n"
+                "- `n_samples :=` rows (default 100); `n_features :=` dims (default 2); `centers :=` blob "
+                "count (default 3); `cluster_std :=` spread (default 1.0); `random_state :=` seed\n"
+                "- Output: `sample_id` INTEGER, one `feature_<i>` DOUBLE per feature, `cluster` INTEGER "
+                "ground-truth label\n"
+                "- The ground-truth `cluster` (not a `target`) lets you score clustering quality; the "
+                "standard input for `kmeans`/`dbscan` demos"
+            ),
         }
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.make_blobs(n_samples => 300, centers => 4)",
+                sql="SELECT * FROM sklearn.datasets.make_blobs(n_samples => 300, centers => 4)",
                 description="300 points in 4 clusters",
             )
         ]
@@ -553,11 +718,29 @@ class MakeMoonsFunction(_TwoFeatureShape):
         categories = ["datasets", "synthetic", "classification"]
         projection_pushdown = True
         tags = {
-            "vgi.columns_md": columns_md(_synthetic_schema(2, "target", pa.int32(), "Binary class label (0 or 1)."))
+            "vgi.result_columns_md": columns_md(
+                _synthetic_schema(2, "target", pa.int32(), "Binary class label (0 or 1).")
+            ),
+            "vgi.doc_llm": (
+                "Table function that generates the classic 'two moons': two interleaving half-circles in 2-D "
+                "(wraps `make_moons`), a fixed 2-feature binary problem. Set `n_samples :=` rows (default 100), "
+                "`noise :=` the Gaussian jitter added (default 0.1), and `random_state :=`. It emits "
+                "`sample_id`, exactly two `feature_<i>` `DOUBLE` columns, and a binary integer `target` (0/1). "
+                "The classes are not linearly separable, so it is the go-to demo for nonlinear classifiers "
+                "(SVM-RBF, KNN, trees) and for showing where linear models fail."
+            ),
+            "vgi.doc_md": (
+                "**make_moons** — two interleaving half-moons (a 2-feature, non-linearly-separable problem).\n\n"
+                "- `n_samples :=` rows (default 100); `noise :=` jitter std-dev (default 0.1); "
+                "`random_state :=` seed\n"
+                "- Output: `sample_id` INTEGER, exactly `feature_0`/`feature_1` DOUBLE, `target` INTEGER (0/1)\n"
+                "- Fixed 2-D binary shape that defeats linear models — the standard test for nonlinear "
+                "classifiers and decision-boundary demos"
+            ),
         }
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.make_moons(n_samples => 200, noise => 0.1)",
+                sql="SELECT * FROM sklearn.datasets.make_moons(n_samples => 200, noise => 0.1)",
                 description="200 points in a two-moon shape",
             )
         ]
@@ -582,11 +765,30 @@ class MakeCirclesFunction(_TwoFeatureShape):
         categories = ["datasets", "synthetic", "classification"]
         projection_pushdown = True
         tags = {
-            "vgi.columns_md": columns_md(_synthetic_schema(2, "target", pa.int32(), "Binary class label (0 or 1)."))
+            "vgi.result_columns_md": columns_md(
+                _synthetic_schema(2, "target", pa.int32(), "Binary class label (0 or 1).")
+            ),
+            "vgi.doc_llm": (
+                "Table function that generates two concentric circles in 2-D — a large ring enclosing a "
+                "smaller one (wraps `make_circles`), a fixed 2-feature binary problem. Set `n_samples :=` rows "
+                "(default 100), `noise :=` the Gaussian jitter (default 0.1), and `random_state :=`. It emits "
+                "`sample_id`, exactly two `feature_<i>` `DOUBLE` columns, and a binary integer `target` (inner "
+                "vs. outer ring). The classes form nested rings that no linear boundary can split, so like "
+                "`make_moons` it is a benchmark for nonlinear/kernel classifiers."
+            ),
+            "vgi.doc_md": (
+                "**make_circles** — two concentric rings (a 2-feature, non-linearly-separable problem).\n\n"
+                "- `n_samples :=` rows (default 100); `noise :=` jitter std-dev (default 0.1); "
+                "`random_state :=` seed\n"
+                "- Output: `sample_id` INTEGER, exactly `feature_0`/`feature_1` DOUBLE, `target` INTEGER "
+                "(inner/outer ring)\n"
+                "- Nested-ring binary shape needing a kernel/nonlinear model; pairs with `make_moons` for "
+                "decision-boundary demos"
+            ),
         }
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.make_circles(n_samples => 200, noise => 0.05)",
+                sql="SELECT * FROM sklearn.datasets.make_circles(n_samples => 200, noise => 0.05)",
                 description="200 points in two concentric rings",
             )
         ]

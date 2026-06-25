@@ -5,8 +5,8 @@ Unlike the column aggregates in ``metrics.py``, these consume a table:
 * ``confusion_matrix`` -- long-format counts of (actual, predicted) label pairs.
 * ``silhouette_score`` -- one score from a feature matrix + cluster labels.
 
-    SELECT * FROM sklearn.confusion_matrix((SELECT y, yhat FROM preds), actual => 'y', predicted => 'yhat');
-    SELECT * FROM sklearn.silhouette_score((SELECT * FROM clustered), label => 'cluster', id => 'id');
+    SELECT * FROM sklearn.metrics.confusion_matrix((SELECT y, yhat FROM preds), actual => 'y', predicted => 'yhat');
+    SELECT * FROM sklearn.metrics.silhouette_score((SELECT * FROM clustered), label => 'cluster', id => 'id');
 """
 
 from __future__ import annotations
@@ -59,11 +59,33 @@ class ConfusionMatrix(SinkBuffer[ConfusionMatrixArgs, DrainState]):
         name = "confusion_matrix"
         description = "Confusion matrix in long format: (actual, predicted, count)"
         categories = ["metrics", "classification"]
-        tags = {"vgi.columns_md": columns_md(_CONFUSION_SCHEMA)}
+        tags = {
+            "vgi.result_columns_md": columns_md(_CONFUSION_SCHEMA),
+            "vgi.doc_llm": (
+                "Table function that tabulates a confusion matrix from a buffered table of label pairs, "
+                "emitting it in long format. The table arg is `(SELECT actual_col, predicted_col FROM ...)`; "
+                "name the columns with `actual :=` and `predicted :=` (default `'actual'`/`'predicted'`). "
+                "Labels are read as integer codes (rounded). Returns one row per observed "
+                "`(actual, predicted)` pair with its `count` — pivot it for a square matrix, or filter "
+                "`actual <> predicted` to inspect specific misclassifications. Use it to see exactly which "
+                "classes a model confuses, not just an aggregate score."
+            ),
+            "vgi.doc_md": (
+                "**Confusion matrix (long format)** — counts of every true/predicted label combination.\n\n"
+                "- Table arg: `(SELECT actual, predicted FROM ...)`; `actual :=` / `predicted :=` name "
+                "the columns (integer-coded labels)\n"
+                "- Returns one row per observed pair:\n"
+                "  - `actual` — true class label\n"
+                "  - `predicted` — predicted class label\n"
+                "  - `count` — number of rows with that pair\n"
+                "- Long shape sidesteps a fixed matrix width; `PIVOT` to a grid or keep "
+                "`actual <> predicted` rows to enumerate error types"
+            ),
+        }
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.confusion_matrix((SELECT y, yhat FROM preds), "
+                    "SELECT * FROM sklearn.metrics.confusion_matrix((SELECT y, yhat FROM preds), "
                     "actual := 'y', predicted := 'yhat')"
                 ),
                 description="Long-format confusion matrix",
@@ -145,10 +167,33 @@ class SilhouetteScore(SinkBuffer[SilhouetteArgs, DrainState]):
         name = "silhouette_score"
         description = "Mean silhouette coefficient of a clustering (features + label column)"
         categories = ["metrics", "clustering"]
-        tags = {"vgi.columns_md": columns_md(_SILHOUETTE_SCHEMA)}
+        tags = {
+            "vgi.result_columns_md": columns_md(_SILHOUETTE_SCHEMA),
+            "vgi.doc_llm": (
+                "Table function that scores how well-separated a clustering is, returning the mean "
+                "silhouette coefficient over all samples in one row. The table arg is "
+                "`(SELECT feature_cols..., cluster_label FROM ...)`; `label :=` names the cluster column "
+                "(default `'cluster'`) and `id :=` optionally names a column to exclude from the feature "
+                "matrix — every other numeric column is a feature. The silhouette ranges -1..+1 (near +1 = "
+                "dense, well-separated clusters; near 0 = overlapping; negative = likely misassigned "
+                "points), and is an unsupervised quality measure needing no ground truth. NULL is returned "
+                "when fewer than 2 or more than n-1 distinct clusters make it undefined."
+            ),
+            "vgi.doc_md": (
+                "**Silhouette score** — unsupervised measure of cluster separation.\n\n"
+                "- Table arg: `(SELECT <features...>, <label> FROM ...)`; `label :=` the cluster column, "
+                "`id :=` an optional column to drop from the features\n"
+                "- Returns a single row, `silhouette_score` (`DOUBLE`, `NULL` if undefined):\n"
+                "  - `~+1` tight, well-separated clusters\n"
+                "  - `~0` overlapping clusters\n"
+                "  - `<0` points likely in the wrong cluster\n"
+                "- Needs 2..n-1 distinct labels and uses the remaining numeric columns as the feature "
+                "matrix; no ground-truth labels required"
+            ),
+        }
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.silhouette_score((SELECT * FROM clustered), label => 'cluster', id => 'id')",
+                sql="SELECT * FROM sklearn.metrics.silhouette_score((SELECT * FROM clustered), label => 'cluster', id => 'id')",  # noqa: E501
                 description="Silhouette score of a clustering",
             )
         ]
@@ -268,11 +313,33 @@ class RocCurve(_CurveFunction):
         name = "roc_curve"
         description = "ROC curve points (threshold, fpr, tpr) for a binary classifier"
         categories = ["metrics", "classification", "ranking"]
-        tags = {"vgi.columns_md": columns_md(_ROC_SCHEMA)}
+        tags = {
+            "vgi.result_columns_md": columns_md(_ROC_SCHEMA),
+            "vgi.doc_llm": (
+                "Table function that traces the receiver operating characteristic (ROC) curve for a binary "
+                "classifier. The table arg is `(SELECT y_true_col, y_score_col FROM ...)`; `y_true :=` "
+                "names the 0/1 label column and `y_score :=` the continuous score/probability column "
+                "(defaults `'y_true'`/`'y_score'`). Returns one row per distinct decision threshold giving "
+                "the false-positive rate and true-positive rate at that cutoff, sweeping the full "
+                "sensitivity/specificity trade-off. Order by `fpr` and plot tpr-vs-fpr; the area under it "
+                "is `roc_auc_score`. Use it to choose an operating threshold rather than just summarize "
+                "ranking."
+            ),
+            "vgi.doc_md": (
+                "**ROC curve** — false- vs. true-positive rate across all thresholds.\n\n"
+                "- Table arg: `(SELECT y_true, y_score FROM ...)`; `y_true :=` (0/1 labels), "
+                "`y_score :=` (score/probability)\n"
+                "- Returns one row per threshold:\n"
+                "  - `threshold` — the decision cutoff (`NULL` for the all-negative endpoint)\n"
+                "  - `fpr` — false positive rate\n"
+                "  - `tpr` — true positive rate\n"
+                "- Sweep it to pick an operating point; the area under the curve is `roc_auc_score`"
+            ),
+        }
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.roc_curve((SELECT y, p FROM preds), "
+                    "SELECT * FROM sklearn.metrics.roc_curve((SELECT y, p FROM preds), "
                     "y_true := 'y', y_score := 'p') ORDER BY fpr"
                 ),
                 description="ROC curve points",
@@ -281,7 +348,7 @@ class RocCurve(_CurveFunction):
 
     @classmethod
     def curve(cls, y_true: np.ndarray, y_score: np.ndarray) -> dict[str, list[float | None]]:
-        """Return ROC (threshold, fpr, tpr) points from sklearn.roc_curve."""
+        """Return ROC (threshold, fpr, tpr) points from sklearn.metrics.roc_curve."""
         fpr, tpr, thresholds = skm.roc_curve(y_true, y_score)
         # sklearn prepends an `inf` threshold (the all-negative point); NULL it.
         thr = [None if not np.isfinite(t) else float(t) for t in thresholds]
@@ -308,11 +375,32 @@ class PrecisionRecallCurve(_CurveFunction):
         name = "precision_recall_curve"
         description = "Precision-recall curve points (threshold, precision, recall) for a binary classifier"
         categories = ["metrics", "classification", "ranking"]
-        tags = {"vgi.columns_md": columns_md(_PR_SCHEMA)}
+        tags = {
+            "vgi.result_columns_md": columns_md(_PR_SCHEMA),
+            "vgi.doc_llm": (
+                "Table function that traces the precision-recall curve for a binary classifier. The table "
+                "arg is `(SELECT y_true_col, y_score_col FROM ...)`; `y_true :=` names the 0/1 label column "
+                "and `y_score :=` the score/probability column (defaults `'y_true'`/`'y_score'`). Returns "
+                "one row per threshold with the precision and recall at that cutoff. Preferred over the ROC "
+                "curve when positives are rare, since it ignores true negatives; order by `recall` and plot "
+                "precision-vs-recall, and `average_precision_score` summarizes the area. Use it to pick a "
+                "threshold that balances precision against recall."
+            ),
+            "vgi.doc_md": (
+                "**Precision-recall curve** — precision vs. recall across all thresholds.\n\n"
+                "- Table arg: `(SELECT y_true, y_score FROM ...)`; `y_true :=` (0/1 labels), "
+                "`y_score :=` (score/probability)\n"
+                "- Returns one row per threshold:\n"
+                "  - `threshold` — the decision cutoff (`NULL` for the final endpoint)\n"
+                "  - `precision` — precision at that cutoff\n"
+                "  - `recall` — recall at that cutoff\n"
+                "- More informative than ROC under class imbalance; its area is `average_precision_score`"
+            ),
+        }
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.precision_recall_curve((SELECT y, p FROM preds), "
+                    "SELECT * FROM sklearn.metrics.precision_recall_curve((SELECT y, p FROM preds), "
                     "y_true := 'y', y_score := 'p') ORDER BY recall"
                 ),
                 description="Precision-recall curve points",
@@ -361,11 +449,33 @@ class CalibrationCurve(SinkBuffer[_CalibrationArgs, DrainState]):
         name = "calibration_curve"
         description = "Reliability (calibration) curve: predicted vs. observed probability per bin"
         categories = ["metrics", "classification"]
-        tags = {"vgi.columns_md": columns_md(_CALIBRATION_SCHEMA)}
+        tags = {
+            "vgi.result_columns_md": columns_md(_CALIBRATION_SCHEMA),
+            "vgi.doc_llm": (
+                "Table function that builds a reliability (calibration) curve to check whether a binary "
+                "classifier's predicted probabilities match observed outcome frequencies. The table arg is "
+                "`(SELECT y_true_col, y_score_col FROM ...)`; `y_true :=` names the 0/1 label column, "
+                "`y_score :=` the predicted-probability column, and `n_bins :=` sets how many probability "
+                "bins to group into (default 10). Returns one row per bin with the mean predicted "
+                "probability and the actual fraction of positives in that bin. Plot `prob_true` against "
+                "`prob_pred`: a perfectly calibrated model lies on the diagonal, points above mean "
+                "under-confidence and below mean over-confidence."
+            ),
+            "vgi.doc_md": (
+                "**Calibration (reliability) curve** — predicted vs. observed probability, binned.\n\n"
+                "- Table arg: `(SELECT y_true, y_score FROM ...)`; `y_true :=` (0/1 labels), "
+                "`y_score :=` (predicted probability), `n_bins :=` (bin count, default 10)\n"
+                "- Returns one row per bin:\n"
+                "  - `prob_pred` — mean predicted probability in the bin\n"
+                "  - `prob_true` — observed fraction of positives in the bin\n"
+                "- On the `prob_true` vs `prob_pred` diagonal = well calibrated; above = under-confident, "
+                "below = over-confident"
+            ),
+        }
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.calibration_curve((SELECT y, p FROM preds), "
+                    "SELECT * FROM sklearn.metrics.calibration_curve((SELECT y, p FROM preds), "
                     "y_true := 'y', y_score := 'p', n_bins := 10) ORDER BY prob_pred"
                 ),
                 description="Calibration curve points",

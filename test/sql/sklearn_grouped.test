@@ -17,13 +17,13 @@ CREATE TEMP VIEW d AS
   SELECT sample_id, (sample_id % 2) AS grp,
          sepal_length_cm AS sl, sepal_width_cm AS sw, petal_length_cm AS pl, petal_width_cm AS pw,
          target, target_name
-  FROM sklearn.iris();
+  FROM sklearn.datasets.iris();
 
 # ---- fit one classifier per group via GROUP BY (numeric labels) ----
 
 statement ok
 CREATE TEMP TABLE m AS
-SELECT grp, sklearn.fit_model({'sl': sl, 'sw': sw, 'pl': pl, 'pw': pw}, target,
+SELECT grp, sklearn.models.fit_model({'sl': sl, 'sw': sw, 'pl': pl, 'pw': pw}, target,
                               estimator := 'random_forest_classifier', hyperparams := '{}') AS fit
 FROM d GROUP BY grp;
 
@@ -41,7 +41,7 @@ true
 
 # predict each row with ITS group's model -> high in-sample accuracy
 query I
-SELECT avg((sklearn.predict_one(m.fit.model, {'sl': d.sl, 'sw': d.sw, 'pl': d.pl, 'pw': d.pw}) = d.target)::INT) > 0.95
+SELECT avg((sklearn.models.predict_one(m.fit.model, {'sl': d.sl, 'sw': d.sw, 'pl': d.pl, 'pw': d.pw}) = d.target)::INT) > 0.95
 FROM d JOIN m USING (grp);
 ----
 true
@@ -50,20 +50,20 @@ true
 
 statement ok
 CREATE TEMP TABLE ms AS
-SELECT grp, sklearn.fit_model({'sl': sl, 'sw': sw, 'pl': pl, 'pw': pw}, target_name,
+SELECT grp, sklearn.models.fit_model({'sl': sl, 'sw': sw, 'pl': pl, 'pw': pw}, target_name,
                               estimator := 'random_forest_classifier', hyperparams := '{}') AS fit
 FROM d GROUP BY grp;
 
 # predict_class_one returns the actual string label
 query I
-SELECT avg((sklearn.predict_class_one(ms.fit.model, {'sl': d.sl, 'sw': d.sw, 'pl': d.pl, 'pw': d.pw}) = d.target_name)::INT) > 0.95
+SELECT avg((sklearn.models.predict_class_one(ms.fit.model, {'sl': d.sl, 'sw': d.sw, 'pl': d.pl, 'pw': d.pw}) = d.target_name)::INT) > 0.95
 FROM d JOIN ms USING (grp);
 ----
 true
 
 # probabilities sum to 1
 query I
-SELECT round(list_sum(sklearn.predict_proba_one(ms.fit.model, {'sl': 5.1, 'sw': 3.5, 'pl': 1.4, 'pw': 0.2})), 6)
+SELECT round(list_sum(sklearn.models.predict_proba_one(ms.fit.model, {'sl': 5.1, 'sw': 3.5, 'pl': 1.4, 'pw': 0.2})), 6)
 FROM ms LIMIT 1;
 ----
 1.0
@@ -72,12 +72,12 @@ FROM ms LIMIT 1;
 
 query I
 SELECT count(*) FROM d JOIN m USING (grp)
-WHERE sklearn.predict_one(m.fit.model, {'pw': d.pw, 'pl': d.pl, 'sw': d.sw, 'sl': d.sl}) IS NOT NULL;
+WHERE sklearn.models.predict_one(m.fit.model, {'pw': d.pw, 'pl': d.pl, 'sw': d.sw, 'sl': d.sl}) IS NOT NULL;
 ----
 150
 
 statement error
-SELECT sklearn.predict_one(m.fit.model, {'sl': d.sl, 'sw': d.sw}) FROM d JOIN m USING (grp) LIMIT 1;
+SELECT sklearn.models.predict_one(m.fit.model, {'sl': d.sl, 'sw': d.sw}) FROM d JOIN m USING (grp) LIMIT 1;
 ----
 missing model column
 
@@ -85,7 +85,7 @@ missing model column
 
 query I
 SELECT bool_and(fit.n_features = 2 AND fit.task = 'classification') FROM (
-  SELECT sklearn.fit_model({'wide_petal': pl > 2.5, 'sw': sw}, target,
+  SELECT sklearn.models.fit_model({'wide_petal': pl > 2.5, 'sw': sw}, target,
                            estimator := 'random_forest_classifier', hyperparams := '{}') AS fit
   FROM d GROUP BY grp);
 ----
@@ -96,7 +96,7 @@ true
 # a categorical feature alongside a numeric one; fit reports 2 features
 statement ok
 CREATE TEMP TABLE mc AS
-SELECT grp, sklearn.fit_model(
+SELECT grp, sklearn.models.fit_model(
          {'petal_class': CASE WHEN pl > 4.9 THEN 'long' WHEN pl > 2.5 THEN 'medium' ELSE 'short' END, 'sw': sw},
          target, estimator := 'random_forest_classifier', hyperparams := '{}') AS fit
 FROM d GROUP BY grp;
@@ -109,7 +109,7 @@ true
 # predict with each group's model re-applies the encoding
 query I
 SELECT count(*) FROM d JOIN mc USING (grp)
-WHERE sklearn.predict_one(mc.fit.model,
+WHERE sklearn.models.predict_one(mc.fit.model,
         {'petal_class': CASE WHEN d.pl > 4.9 THEN 'long' WHEN d.pl > 2.5 THEN 'medium' ELSE 'short' END,
          'sw': d.sw}) IS NOT NULL;
 ----
@@ -119,9 +119,9 @@ WHERE sklearn.predict_one(mc.fit.model,
 
 query I
 SELECT bool_and(fit.task = 'regression') FROM (
-  SELECT sklearn.fit_model({'age': age, 'bmi': bmi, 'bp': bp}, target,
+  SELECT sklearn.models.fit_model({'age': age, 'bmi': bmi, 'bp': bp}, target,
                            estimator := 'ridge', hyperparams := '{}') AS fit
-  FROM (SELECT (sample_id % 2) AS grp, * FROM sklearn.diabetes()) GROUP BY grp);
+  FROM (SELECT (sample_id % 2) AS grp, * FROM sklearn.datasets.diabetes()) GROUP BY grp);
 ----
 true
 

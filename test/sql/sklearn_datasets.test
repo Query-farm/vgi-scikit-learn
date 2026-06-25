@@ -35,19 +35,19 @@ sklearn	main
 
 # 150 samples
 query I
-SELECT count(*) FROM sklearn.iris();
+SELECT count(*) FROM sklearn.datasets.iris();
 ----
 150
 
 # 7 columns: sample_id + 4 features + target + target_name
 query I
-SELECT count(*) FROM (DESCRIBE SELECT * FROM sklearn.iris());
+SELECT count(*) FROM (DESCRIBE SELECT * FROM sklearn.datasets.iris());
 ----
 7
 
 # Three balanced species, 50 each
 query II rowsort
-SELECT target_name, count(*) FROM sklearn.iris() GROUP BY target_name;
+SELECT target_name, count(*) FROM sklearn.datasets.iris() GROUP BY target_name;
 ----
 setosa	50
 versicolor	50
@@ -55,13 +55,13 @@ virginica	50
 
 # Projection + aggregation pushes through cleanly
 query I
-SELECT round(avg(petal_length_cm), 3) FROM sklearn.iris() WHERE target_name = 'setosa';
+SELECT round(avg(petal_length_cm), 3) FROM sklearn.datasets.iris() WHERE target_name = 'setosa';
 ----
 1.462
 
 # digits: 1797 handwritten-digit rows across 10 classes
 query II
-SELECT count(*), count(DISTINCT target) FROM sklearn.digits();
+SELECT count(*), count(DISTINCT target) FROM sklearn.datasets.digits();
 ----
 1797	10
 

@@ -15,25 +15,25 @@ ATTACH 'sklearn' AS sklearn (TYPE vgi, LOCATION '${VGI_SKLEARN_WORKER}');
 statement ok
 CREATE TEMP VIEW iris_feats AS
   SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm
-  FROM sklearn.iris();
+  FROM sklearn.datasets.iris();
 
 # ---- StandardScaler: rows preserved, scaled column has ~0 mean and ~1 std ----
 
 query I
-SELECT count(*) FROM sklearn.standard_scaler((SELECT * FROM iris_feats), id => 'sample_id');
+SELECT count(*) FROM sklearn.preprocessing.standard_scaler((SELECT * FROM iris_feats), id => 'sample_id');
 ----
 150
 
 query II
 SELECT abs(avg(sepal_length_cm)) < 1e-9, abs(stddev_pop(sepal_length_cm) - 1) < 1e-6
-FROM sklearn.standard_scaler((SELECT * FROM iris_feats), id => 'sample_id');
+FROM sklearn.preprocessing.standard_scaler((SELECT * FROM iris_feats), id => 'sample_id');
 ----
 true	true
 
 # id is carried through unchanged and is joinable
 query I
-SELECT count(*) FROM sklearn.standard_scaler((SELECT * FROM iris_feats), id => 'sample_id') s
-JOIN sklearn.iris() i USING (sample_id);
+SELECT count(*) FROM sklearn.preprocessing.standard_scaler((SELECT * FROM iris_feats), id => 'sample_id') s
+JOIN sklearn.datasets.iris() i USING (sample_id);
 ----
 150
 
@@ -41,7 +41,7 @@ JOIN sklearn.iris() i USING (sample_id);
 
 query I
 SELECT bool_and(petal_length_cm BETWEEN 0 AND 1)
-FROM sklearn.minmax_scaler((SELECT * FROM iris_feats), id => 'sample_id');
+FROM sklearn.preprocessing.minmax_scaler((SELECT * FROM iris_feats), id => 'sample_id');
 ----
 true
 
@@ -49,20 +49,20 @@ true
 
 query I
 SELECT count(*) FROM (DESCRIBE
-  SELECT * FROM sklearn.pca((SELECT * FROM iris_feats), id => 'sample_id', n_components => 2));
+  SELECT * FROM sklearn.preprocessing.pca((SELECT * FROM iris_feats), id => 'sample_id', n_components => 2));
 ----
 3
 
 query I
-SELECT count(*) FROM sklearn.pca((SELECT * FROM iris_feats), id => 'sample_id', n_components => 2);
+SELECT count(*) FROM sklearn.preprocessing.pca((SELECT * FROM iris_feats), id => 'sample_id', n_components => 2);
 ----
 150
 
 # ---- KMeans on well-separated blobs recovers the 3 clusters ----
 
 query I
-SELECT count(DISTINCT cluster) FROM sklearn.kmeans(
-  (SELECT sample_id, feature_0, feature_1 FROM sklearn.make_blobs(n_samples => 150, centers => 3)),
+SELECT count(DISTINCT cluster) FROM sklearn.preprocessing.kmeans(
+  (SELECT sample_id, feature_0, feature_1 FROM sklearn.datasets.make_blobs(n_samples => 150, centers => 3)),
   id => 'sample_id', n_clusters => 3);
 ----
 3
@@ -71,7 +71,7 @@ SELECT count(DISTINCT cluster) FROM sklearn.kmeans(
 
 query I
 SELECT (sum(is_outlier) > 0 AND sum(is_outlier) < count(*))
-FROM sklearn.isolation_forest((SELECT * FROM iris_feats), id => 'sample_id', contamination => 0.1);
+FROM sklearn.preprocessing.isolation_forest((SELECT * FROM iris_feats), id => 'sample_id', contamination => 0.1);
 ----
 true
 
@@ -79,11 +79,11 @@ true
 
 query II
 SELECT
-  (SELECT count(DISTINCT cluster) FROM sklearn.agglomerative_clustering(
-     (SELECT sample_id, feature_0, feature_1 FROM sklearn.make_blobs(n_samples => 150, centers => 3)),
+  (SELECT count(DISTINCT cluster) FROM sklearn.preprocessing.agglomerative_clustering(
+     (SELECT sample_id, feature_0, feature_1 FROM sklearn.datasets.make_blobs(n_samples => 150, centers => 3)),
      id => 'sample_id', n_clusters => 3)),
-  (SELECT count(DISTINCT cluster) FROM sklearn.gaussian_mixture(
-     (SELECT sample_id, feature_0, feature_1 FROM sklearn.make_blobs(n_samples => 150, centers => 3)),
+  (SELECT count(DISTINCT cluster) FROM sklearn.preprocessing.gaussian_mixture(
+     (SELECT sample_id, feature_0, feature_1 FROM sklearn.datasets.make_blobs(n_samples => 150, centers => 3)),
      id => 'sample_id', n_components => 3));
 ----
 3	3
@@ -92,7 +92,7 @@ SELECT
 
 query I
 SELECT (sum(is_outlier) > 0 AND sum(is_outlier) < count(*))
-FROM sklearn.local_outlier_factor((SELECT * FROM iris_feats), id => 'sample_id');
+FROM sklearn.preprocessing.local_outlier_factor((SELECT * FROM iris_feats), id => 'sample_id');
 ----
 true
 
@@ -100,7 +100,7 @@ true
 
 query II
 SELECT count(*), count(component_1) FILTER (WHERE component_2 IS NOT NULL)
-FROM sklearn.tsne((SELECT * FROM iris_feats), id => 'sample_id', n_components => 2, perplexity => 30);
+FROM sklearn.preprocessing.tsne((SELECT * FROM iris_feats), id => 'sample_id', n_components => 2, perplexity => 30);
 ----
 150	150
 
@@ -108,7 +108,7 @@ FROM sklearn.tsne((SELECT * FROM iris_feats), id => 'sample_id', n_components =>
 
 query I
 SELECT bool_and(abs(sepal_length_cm) <= 1.0 AND abs(petal_length_cm) <= 1.0)
-FROM sklearn.maxabs_scaler((SELECT * FROM iris_feats), id => 'sample_id');
+FROM sklearn.preprocessing.maxabs_scaler((SELECT * FROM iris_feats), id => 'sample_id');
 ----
 true
 
@@ -116,7 +116,7 @@ true
 
 query I
 SELECT count(DISTINCT petal_length_cm)
-FROM sklearn.kbins_discretizer((SELECT * FROM iris_feats), id => 'sample_id', n_bins => 4);
+FROM sklearn.preprocessing.kbins_discretizer((SELECT * FROM iris_feats), id => 'sample_id', n_bins => 4);
 ----
 4
 
@@ -125,7 +125,7 @@ FROM sklearn.kbins_discretizer((SELECT * FROM iris_feats), id => 'sample_id', n_
 query I
 SELECT bool_and(abs(sepal_length_cm*sepal_length_cm + sepal_width_cm*sepal_width_cm
                   + petal_length_cm*petal_length_cm + petal_width_cm*petal_width_cm - 1.0) < 1e-9)
-FROM sklearn.normalizer((SELECT * FROM iris_feats), id => 'sample_id');
+FROM sklearn.preprocessing.normalizer((SELECT * FROM iris_feats), id => 'sample_id');
 ----
 true
 
@@ -133,9 +133,9 @@ true
 
 query II
 SELECT count(*), bool_and(sepal_length_cm IS NOT NULL)
-FROM sklearn.simple_imputer(
+FROM sklearn.preprocessing.simple_imputer(
   (SELECT sample_id, CASE WHEN sample_id = 0 THEN NULL ELSE sepal_length_cm END AS sepal_length_cm,
-          sepal_width_cm, petal_length_cm, petal_width_cm FROM sklearn.iris()),
+          sepal_width_cm, petal_length_cm, petal_width_cm FROM sklearn.datasets.iris()),
   id => 'sample_id', strategy => 'median');
 ----
 150	true
@@ -143,7 +143,7 @@ FROM sklearn.simple_imputer(
 # ---- TruncatedSVD reduces to component_1..k (k < n_features) ----
 
 query I
-SELECT count(*) FROM sklearn.truncated_svd((SELECT * FROM iris_feats), id => 'sample_id', n_components => 2)
+SELECT count(*) FROM sklearn.preprocessing.truncated_svd((SELECT * FROM iris_feats), id => 'sample_id', n_components => 2)
 WHERE component_1 IS NOT NULL AND component_2 IS NOT NULL;
 ----
 150
@@ -151,8 +151,8 @@ WHERE component_1 IS NOT NULL AND component_2 IS NOT NULL;
 # ---- DBSCAN labels well-separated blobs (>=1 cluster, noise allowed as -1) ----
 
 query I
-SELECT count(DISTINCT cluster) >= 1 AND min(cluster) >= -1 FROM sklearn.dbscan(
-  (SELECT sample_id, feature_0, feature_1 FROM sklearn.make_blobs(n_samples => 150, centers => 3)),
+SELECT count(DISTINCT cluster) >= 1 AND min(cluster) >= -1 FROM sklearn.preprocessing.dbscan(
+  (SELECT sample_id, feature_0, feature_1 FROM sklearn.datasets.make_blobs(n_samples => 150, centers => 3)),
   id => 'sample_id', eps => 1.5);
 ----
 true
@@ -162,7 +162,7 @@ true
 # 150 rows preserved; the 3 species map to exactly 3 distinct codes {0,1,2}
 query III
 SELECT count(*), count(DISTINCT target_name), min(target_name) >= 0 AND max(target_name) = 2
-FROM sklearn.ordinal_encoder((SELECT sample_id, target_name FROM sklearn.iris()), id => 'sample_id');
+FROM sklearn.preprocessing.ordinal_encoder((SELECT sample_id, target_name FROM sklearn.datasets.iris()), id => 'sample_id');
 ----
 150	3	true
 
@@ -171,8 +171,8 @@ query I
 SELECT bool_and(code = expected) FROM (
   SELECT e.target_name AS code,
          CASE i.target_name WHEN 'setosa' THEN 0 WHEN 'versicolor' THEN 1 ELSE 2 END AS expected
-  FROM sklearn.ordinal_encoder((SELECT sample_id, target_name FROM sklearn.iris()), id => 'sample_id') e
-  JOIN sklearn.iris() i USING (sample_id));
+  FROM sklearn.preprocessing.ordinal_encoder((SELECT sample_id, target_name FROM sklearn.datasets.iris()), id => 'sample_id') e
+  JOIN sklearn.datasets.iris() i USING (sample_id));
 ----
 true
 
@@ -181,14 +181,14 @@ true
 # exactly one active category per input row (150), all value 1.0
 query III
 SELECT count(*), count(DISTINCT category), bool_and(value = 1.0)
-FROM sklearn.one_hot_encoder((SELECT sample_id, target_name FROM sklearn.iris()), id => 'sample_id');
+FROM sklearn.preprocessing.one_hot_encoder((SELECT sample_id, target_name FROM sklearn.datasets.iris()), id => 'sample_id');
 ----
 150	3	true
 
 # pivots back to a wide one-hot whose row sums are 1 (inactive cells are NULL -> 0)
 query I
 SELECT bool_and(coalesce(setosa, 0) + coalesce(versicolor, 0) + coalesce(virginica, 0) = 1) FROM (
-  PIVOT sklearn.one_hot_encoder((SELECT sample_id, target_name FROM sklearn.iris()), id => 'sample_id')
+  PIVOT sklearn.preprocessing.one_hot_encoder((SELECT sample_id, target_name FROM sklearn.datasets.iris()), id => 'sample_id')
   ON category USING sum(value) GROUP BY sample_id);
 ----
 true
@@ -198,14 +198,14 @@ true
 # binary target (is-setosa); 150 rows, the species name maps to 2 encoded values
 query II
 SELECT count(*), count(DISTINCT round(target_name, 6))
-FROM sklearn.target_encoder((SELECT sample_id, target_name, (target = 0)::INT AS y FROM sklearn.iris()),
+FROM sklearn.preprocessing.target_encoder((SELECT sample_id, target_name, (target = 0)::INT AS y FROM sklearn.datasets.iris()),
                             id => 'sample_id', target := 'y');
 ----
 150	2
 
 # a multiclass target would expand the width -> rejected
 statement error
-SELECT * FROM sklearn.target_encoder((SELECT sample_id, target_name, target AS y FROM sklearn.iris()),
+SELECT * FROM sklearn.preprocessing.target_encoder((SELECT sample_id, target_name, target AS y FROM sklearn.datasets.iris()),
                                      id => 'sample_id', target := 'y');
 ----
 binary or continuous
@@ -216,8 +216,8 @@ binary or continuous
 query II
 SELECT count(*), bool_and(abs(sepal_length_cm_x_sepal_width_cm
        - sepal_length_cm * sepal_width_cm) < 1e-9)
-FROM sklearn.polynomial_features(
-  (SELECT sample_id, sepal_length_cm, sepal_width_cm FROM sklearn.iris()), id => 'sample_id', degree => 2);
+FROM sklearn.preprocessing.polynomial_features(
+  (SELECT sample_id, sepal_length_cm, sepal_width_cm FROM sklearn.datasets.iris()), id => 'sample_id', degree => 2);
 ----
 150	true
 

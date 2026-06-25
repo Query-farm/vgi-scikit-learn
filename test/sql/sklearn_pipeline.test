@@ -14,18 +14,18 @@ ATTACH 'sklearn' AS sklearn (TYPE vgi, LOCATION '${VGI_SKLEARN_WORKER}');
 statement ok
 CREATE TEMP VIEW iris_xy AS
   SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target
-  FROM sklearn.iris();
+  FROM sklearn.datasets.iris();
 
 statement ok
 CREATE TEMP VIEW iris_x AS
   SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm
-  FROM sklearn.iris();
+  FROM sklearn.datasets.iris();
 
 # ---- scale -> PCA -> logistic regression, fit as one model ----
 
 query IIII
 SELECT model_name, estimator, task, n_features
-FROM sklearn.fit_pipeline((SELECT * FROM iris_xy),
+FROM sklearn.models.fit_pipeline((SELECT * FROM iris_xy),
      steps := '[{"kind": "standard_scaler"}, {"kind": "pca", "params": {"n_components": 3}}]',
      estimator := 'logistic_regression', target := 'target', id := 'sample_id', model_name := 'iris_pipe');
 ----
@@ -35,14 +35,14 @@ iris_pipe	logistic_regression	classification	4
 
 query I
 SELECT avg((p.prediction = i.target)::INT) > 0.9
-FROM sklearn.predict((SELECT * FROM iris_x), model_name := 'iris_pipe', id := 'sample_id') p
-JOIN sklearn.iris() i USING (sample_id);
+FROM sklearn.models.predict((SELECT * FROM iris_x), model_name := 'iris_pipe', id := 'sample_id') p
+JOIN sklearn.datasets.iris() i USING (sample_id);
 ----
 true
 
 # ...and so does permutation_importance (model-agnostic, sees the whole pipeline)
 query I
-SELECT count(*) FROM sklearn.permutation_importance((SELECT * FROM iris_xy),
+SELECT count(*) FROM sklearn.models.permutation_importance((SELECT * FROM iris_xy),
      model_name := 'iris_pipe', target := 'target');
 ----
 4
@@ -50,7 +50,7 @@ SELECT count(*) FROM sklearn.permutation_importance((SELECT * FROM iris_xy),
 # ---- an empty steps list is just a plain estimator ----
 
 query I
-SELECT task FROM sklearn.fit_pipeline((SELECT * FROM sklearn.diabetes()),
+SELECT task FROM sklearn.models.fit_pipeline((SELECT * FROM sklearn.datasets.diabetes()),
      estimator := 'ridge', target := 'target', id := 'sample_id');
 ----
 regression
@@ -58,11 +58,11 @@ regression
 # ---- string features are one-hot-encoded ahead of the steps ----
 
 query I
-SELECT n_features FROM sklearn.fit_pipeline(
+SELECT n_features FROM sklearn.models.fit_pipeline(
   (SELECT sample_id, sepal_width_cm,
           CASE WHEN petal_length_cm > 4.9 THEN 'long'
                WHEN petal_length_cm > 2.5 THEN 'medium' ELSE 'short' END AS petal_class, target
-   FROM sklearn.iris()),
+   FROM sklearn.datasets.iris()),
   steps := '[{"kind": "standard_scaler"}]', estimator := 'random_forest_classifier',
   target := 'target', id := 'sample_id');
 ----
@@ -71,13 +71,13 @@ SELECT n_features FROM sklearn.fit_pipeline(
 # ---- an unknown step kind is rejected at bind ----
 
 statement error
-SELECT * FROM sklearn.fit_pipeline((SELECT * FROM iris_xy), steps := '[{"kind": "nope"}]',
+SELECT * FROM sklearn.models.fit_pipeline((SELECT * FROM iris_xy), steps := '[{"kind": "nope"}]',
      target := 'target', id := 'sample_id');
 ----
 unknown step kind
 
 statement ok
-SELECT * FROM sklearn.drop_model('iris_pipe');
+SELECT * FROM sklearn.models.drop_model('iris_pipe');
 
 statement ok
 DETACH sklearn;

@@ -15,51 +15,51 @@ ATTACH 'sklearn' AS sklearn (TYPE vgi, LOCATION '${VGI_SKLEARN_WORKER}');
 statement ok
 CREATE TEMP VIEW iris_tr AS
   SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm
-  FROM sklearn.iris() WHERE sample_id < 100;
+  FROM sklearn.datasets.iris() WHERE sample_id < 100;
 
 statement ok
 CREATE TEMP VIEW iris_te AS
   SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm
-  FROM sklearn.iris() WHERE sample_id >= 100;
+  FROM sklearn.datasets.iris() WHERE sample_id >= 100;
 
 # ---- fit a scaler on the train half and store it ----
 
 query IIII
 SELECT transformer_name, kind, n_features, n_output
-FROM sklearn.fit_transformer((SELECT * FROM iris_tr),
+FROM sklearn.preprocessing.fit_transformer((SELECT * FROM iris_tr),
      transformer_name := 'sc', kind := 'standard_scaler', id := 'sample_id');
 ----
 sc	standard_scaler	4	4
 
 statement ok
-SELECT * FROM sklearn.list_transformers() WHERE transformer_name = 'sc';
+SELECT * FROM sklearn.preprocessing.list_transformers() WHERE transformer_name = 'sc';
 
 # ---- applying to the train half gives ~zero mean; the held-out half does NOT
 # (it is scaled with the TRAINING statistics — no leakage) ----
 
 query I
 SELECT abs(avg(sepal_length_cm)) < 1e-9
-FROM sklearn.apply_transform((SELECT * FROM iris_tr), transformer_name := 'sc', id := 'sample_id');
+FROM sklearn.preprocessing.apply_transform((SELECT * FROM iris_tr), transformer_name := 'sc', id := 'sample_id');
 ----
 true
 
 query II
 SELECT count(*), abs(avg(sepal_length_cm)) > 0.1
-FROM sklearn.apply_transform((SELECT * FROM iris_te), transformer_name := 'sc', id := 'sample_id');
+FROM sklearn.preprocessing.apply_transform((SELECT * FROM iris_te), transformer_name := 'sc', id := 'sample_id');
 ----
 50	true
 
 # ---- features align by name, not position; a missing feature errors at bind ----
 
 query I
-SELECT count(*) FROM sklearn.apply_transform(
-  (SELECT sample_id, petal_width_cm, petal_length_cm, sepal_width_cm, sepal_length_cm FROM sklearn.iris()),
+SELECT count(*) FROM sklearn.preprocessing.apply_transform(
+  (SELECT sample_id, petal_width_cm, petal_length_cm, sepal_width_cm, sepal_length_cm FROM sklearn.datasets.iris()),
   transformer_name := 'sc', id := 'sample_id');
 ----
 150
 
 statement error
-SELECT * FROM sklearn.apply_transform((SELECT sample_id, sepal_length_cm FROM sklearn.iris()),
+SELECT * FROM sklearn.preprocessing.apply_transform((SELECT sample_id, sepal_length_cm FROM sklearn.datasets.iris()),
   transformer_name := 'sc', id := 'sample_id');
 ----
 
@@ -67,13 +67,13 @@ SELECT * FROM sklearn.apply_transform((SELECT sample_id, sepal_length_cm FROM sk
 
 query II
 SELECT n_output, output_names
-FROM sklearn.fit_transformer((SELECT * FROM iris_tr),
+FROM sklearn.preprocessing.fit_transformer((SELECT * FROM iris_tr),
      transformer_name := 'pc', kind := 'pca', id := 'sample_id', params := '{"n_components": 2}');
 ----
 2	[component_1, component_2]
 
 query I
-SELECT count(*) FROM sklearn.apply_transform((SELECT * FROM iris_te), transformer_name := 'pc', id := 'sample_id')
+SELECT count(*) FROM sklearn.preprocessing.apply_transform((SELECT * FROM iris_te), transformer_name := 'pc', id := 'sample_id')
 WHERE component_1 IS NOT NULL AND component_2 IS NOT NULL;
 ----
 50
@@ -81,13 +81,13 @@ WHERE component_1 IS NOT NULL AND component_2 IS NOT NULL;
 # ---- kbins_discretizer: integer bin codes (round-trip on the full set -> 4 bins) ----
 
 statement ok
-SELECT * FROM sklearn.fit_transformer(
-  (SELECT sample_id, petal_length_cm FROM sklearn.iris()),
+SELECT * FROM sklearn.preprocessing.fit_transformer(
+  (SELECT sample_id, petal_length_cm FROM sklearn.datasets.iris()),
   transformer_name := 'kb', kind := 'kbins_discretizer', id := 'sample_id', params := '{"n_bins": 4}');
 
 query I
 SELECT count(DISTINCT petal_length_cm)
-FROM sklearn.apply_transform((SELECT sample_id, petal_length_cm FROM sklearn.iris()),
+FROM sklearn.preprocessing.apply_transform((SELECT sample_id, petal_length_cm FROM sklearn.datasets.iris()),
      transformer_name := 'kb', id := 'sample_id');
 ----
 4
@@ -95,35 +95,35 @@ FROM sklearn.apply_transform((SELECT sample_id, petal_length_cm FROM sklearn.iri
 # ---- the BLOB path: a fitted transformer flows through SQL without the registry ----
 
 statement ok
-SET VARIABLE t = (SELECT transformer FROM sklearn.fit_transformer((SELECT * FROM iris_tr),
+SET VARIABLE t = (SELECT transformer FROM sklearn.preprocessing.fit_transformer((SELECT * FROM iris_tr),
                   kind := 'minmax_scaler', id := 'sample_id'));
 
 query I
-SELECT count(*) FROM sklearn.apply_transform((SELECT * FROM iris_te), transformer := getvariable('t'), id := 'sample_id');
+SELECT count(*) FROM sklearn.preprocessing.apply_transform((SELECT * FROM iris_te), transformer := getvariable('t'), id := 'sample_id');
 ----
 50
 
 # ---- an unknown kind is rejected at bind ----
 
 statement error
-SELECT * FROM sklearn.fit_transformer((SELECT * FROM iris_tr), kind := 'nope', id := 'sample_id');
+SELECT * FROM sklearn.preprocessing.fit_transformer((SELECT * FROM iris_tr), kind := 'nope', id := 'sample_id');
 ----
 
 # ---- drop_transformer removes them ----
 
 query I
-SELECT dropped FROM sklearn.drop_transformer('sc');
+SELECT dropped FROM sklearn.preprocessing.drop_transformer('sc');
 ----
 true
 
 statement ok
-SELECT * FROM sklearn.drop_transformer('pc');
+SELECT * FROM sklearn.preprocessing.drop_transformer('pc');
 
 statement ok
-SELECT * FROM sklearn.drop_transformer('kb');
+SELECT * FROM sklearn.preprocessing.drop_transformer('kb');
 
 query I
-SELECT count(*) FROM sklearn.list_transformers() WHERE transformer_name IN ('sc', 'pc', 'kb');
+SELECT count(*) FROM sklearn.preprocessing.list_transformers() WHERE transformer_name IN ('sc', 'pc', 'kb');
 ----
 0
 

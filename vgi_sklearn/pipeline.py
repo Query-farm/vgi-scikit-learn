@@ -7,12 +7,12 @@ fitted ``Pipeline``, everything that consumes a model — ``predict``,
 ``cross_val_predict``, ``permutation_importance``, the registry — works on it
 unchanged; there is no separate ``apply_pipeline``.
 
-    SELECT * FROM sklearn.fit_pipeline((SELECT * FROM train),
+    SELECT * FROM sklearn.models.fit_pipeline((SELECT * FROM train),
       steps := '[{"kind": "simple_imputer", "params": {"strategy": "median"}},
                  {"kind": "standard_scaler"}, {"kind": "pca", "params": {"n_components": 3}}]',
       estimator := 'logistic_regression', target := 'label', model_name := 'clf');
 
-    SELECT * FROM sklearn.predict((SELECT * FROM test), model_name := 'clf', id := 'id');
+    SELECT * FROM sklearn.models.predict((SELECT * FROM test), model_name := 'clf', id := 'id');
 
 String features are one-hot-encoded ahead of the steps (same auto-encoding as
 ``fit``), so a pipeline of ``scaler -> pca -> model`` also works on mixed data.
@@ -88,12 +88,39 @@ class FitPipeline(SinkBuffer[FitPipelineArgs, DrainState]):
         name = "fit_pipeline"
         description = "Fit preprocessing steps + an estimator as one model; predict with the usual 'predict'"
         categories = ["models", "supervised", "pipeline"]
-        tags = {"vgi.columns_md": columns_md(_FIT_SCHEMA)}
+        tags = {
+            "vgi.result_columns_md": columns_md(_FIT_SCHEMA),
+            "vgi.doc_llm": (
+                "Table function that chains preprocessing transformers and a final estimator into one "
+                "scikit-learn `Pipeline`, fits the whole thing on the buffered training relation "
+                "`(SELECT ...)` (Arg(0)), and stores it as an ordinary model BLOB. Pass `steps :=` a JSON "
+                'array of `{"kind": ..., "params": {...}}` transformers (same kinds as `fit_transformer`, '
+                "e.g. simple_imputer -> standard_scaler -> pca), the final `estimator :=` name, the required "
+                "`target :=` label column, an optional `id :=` to exclude, estimator `params :=` JSON, and "
+                "`model_name :=` to persist. String features are one-hot-encoded ahead of the steps. It "
+                "returns the same one-row fit summary + `model` BLOB as `fit`, and the stored artifact is a "
+                "normal model — score it with the usual `predict` (no `apply_pipeline` exists)."
+            ),
+            "vgi.doc_md": (
+                "**fit_pipeline** — fit preprocessing steps + an estimator as a single stored model.\n\n"
+                "Builds a `Pipeline([steps..., estimator])`, fits it on the buffered training table, and "
+                "saves it as a normal model BLOB; everything that consumes a model (`predict`, "
+                "`cross_val_predict`, `permutation_importance`) then works unchanged.\n\n"
+                "- Input: `(SELECT ...)` training table (features + target [+ id])\n"
+                "- `steps :=` JSON array of `{kind, params}` transformers; `estimator :=` final estimator; "
+                "`target :=` label column (**required**); `id :=` excluded passthrough; `params :=` estimator "
+                "hyperparams JSON; `model_name :=` to persist to the registry\n"
+                "- Output: the `fit` summary row (`model_name`, `estimator`, `task`, `n_features`, "
+                "`train_score`, ...) plus the `model` BLOB\n"
+                "- String columns one-hot-encode before the steps; predict with the standard `predict` — "
+                "there is intentionally no `apply_pipeline`"
+            ),
+        }
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT model_name, estimator, n_features FROM sklearn.fit_pipeline("
-                    "(SELECT * FROM sklearn.iris()), "
+                    "SELECT model_name, estimator, n_features FROM sklearn.models.fit_pipeline("
+                    "(SELECT * FROM sklearn.datasets.iris()), "
                     'steps := \'[{"kind": "standard_scaler"}, {"kind": "pca", "params": {"n_components": 3}}]\', '
                     "estimator := 'logistic_regression', target := 'target', id := 'sample_id', "
                     "model_name := 'iris_pipe')"

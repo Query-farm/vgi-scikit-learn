@@ -15,12 +15,12 @@ statement ok
 CREATE TEMP VIEW tr AS
   SELECT sample_id, sepal_length_cm AS f1, sepal_width_cm AS f2,
          petal_length_cm AS f3, petal_width_cm AS f4, target
-  FROM sklearn.iris();
+  FROM sklearn.datasets.iris();
 
 # typed hyperparameters as native SQL args; returns the standard fit summary
 query III
 SELECT estimator, task, n_features
-FROM sklearn.fit_random_forest_classifier((SELECT * FROM tr),
+FROM sklearn.estimators.fit_random_forest_classifier((SELECT * FROM tr),
      model_name := 'trf', target := 'target', id := 'sample_id',
      n_estimators := 250, max_depth := 5);
 ----
@@ -28,20 +28,20 @@ random_forest_classifier	classification	4
 
 # the typed model is in the registry and predicts
 query I
-SELECT count(*) FROM sklearn.predict((SELECT * FROM tr), model_name := 'trf', id := 'sample_id');
+SELECT count(*) FROM sklearn.models.predict((SELECT * FROM tr), model_name := 'trf', id := 'sample_id');
 ----
 150
 
 # max_depth := 0 means "unlimited" (translated to None) and must not error
 query I
-SELECT task FROM sklearn.fit_decision_tree_classifier((SELECT * FROM tr),
+SELECT task FROM sklearn.estimators.fit_decision_tree_classifier((SELECT * FROM tr),
      target := 'target', id := 'sample_id', max_depth := 0) LIMIT 1;
 ----
 classification
 
 # regression estimator via typed wrapper
 query I
-SELECT task FROM sklearn.fit_ridge((SELECT * FROM sklearn.diabetes()),
+SELECT task FROM sklearn.estimators.fit_ridge((SELECT * FROM sklearn.datasets.diabetes()),
      target := 'target', id := 'sample_id', alpha := 0.5) LIMIT 1;
 ----
 regression
@@ -49,35 +49,35 @@ regression
 # a Tier-1 classifier (ExtraTrees) via its typed wrapper, then predict
 query II
 SELECT estimator, n_features
-FROM sklearn.fit_extra_trees_classifier((SELECT * FROM tr),
+FROM sklearn.estimators.fit_extra_trees_classifier((SELECT * FROM tr),
      model_name := 'xtc', target := 'target', id := 'sample_id', n_estimators := 50);
 ----
 extra_trees_classifier	4
 
 query I
 SELECT avg((p.prediction = i.target)::INT) > 0.9
-FROM sklearn.predict((SELECT * FROM tr), model_name := 'xtc', id := 'sample_id') p
-JOIN sklearn.iris() i USING (sample_id);
+FROM sklearn.models.predict((SELECT * FROM tr), model_name := 'xtc', id := 'sample_id') p
+JOIN sklearn.datasets.iris() i USING (sample_id);
 ----
 true
 
 statement ok
-SELECT * FROM sklearn.drop_model('xtc');
+SELECT * FROM sklearn.models.drop_model('xtc');
 
 # a Tier-1 regressor (ElasticNet) via its typed wrapper
 query I
-SELECT task FROM sklearn.fit_elastic_net((SELECT * FROM sklearn.diabetes()),
+SELECT task FROM sklearn.estimators.fit_elastic_net((SELECT * FROM sklearn.datasets.diabetes()),
      target := 'target', id := 'sample_id', alpha := 0.5, l1_ratio := 0.5) LIMIT 1;
 ----
 regression
 
 # a wrongly-typed hyperparameter is rejected at the SQL layer
 statement error
-SELECT * FROM sklearn.fit_ridge((SELECT * FROM tr), target := 'target', alpha := 'big');
+SELECT * FROM sklearn.estimators.fit_ridge((SELECT * FROM tr), target := 'target', alpha := 'big');
 ----
 
 statement ok
-SELECT * FROM sklearn.drop_model('trf');
+SELECT * FROM sklearn.models.drop_model('trf');
 
 statement ok
 DETACH sklearn;

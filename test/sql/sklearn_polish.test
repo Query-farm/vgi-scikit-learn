@@ -19,13 +19,13 @@ SELECT * FROM (VALUES (0,0),(0,0),(1,1),(1,0),(2,2)) AS t(y, yhat);
 
 # diagonal-ish: total counts sum to the row count
 query I
-SELECT sum(count) FROM sklearn.confusion_matrix((SELECT y, yhat FROM preds), actual => 'y', predicted => 'yhat');
+SELECT sum(count) FROM sklearn.metrics.confusion_matrix((SELECT y, yhat FROM preds), actual => 'y', predicted => 'yhat');
 ----
 5
 
 # the (1 -> 0) misclassification is present with count 1
 query I
-SELECT count FROM sklearn.confusion_matrix((SELECT y, yhat FROM preds), actual => 'y', predicted => 'yhat')
+SELECT count FROM sklearn.metrics.confusion_matrix((SELECT y, yhat FROM preds), actual => 'y', predicted => 'yhat')
 WHERE actual = 1 AND predicted = 0;
 ----
 1
@@ -33,9 +33,9 @@ WHERE actual = 1 AND predicted = 0;
 # ---- silhouette_score on well-separated blobs is strongly positive ----
 
 query I
-SELECT silhouette_score > 0.5 FROM sklearn.silhouette_score(
+SELECT silhouette_score > 0.5 FROM sklearn.metrics.silhouette_score(
   (SELECT sample_id, feature_0, feature_1, cluster
-   FROM sklearn.make_blobs(n_samples => 150, centers => 3, cluster_std => 0.5)),
+   FROM sklearn.datasets.make_blobs(n_samples => 150, centers => 3, cluster_std => 0.5)),
   label => 'cluster', id => 'sample_id');
 ----
 true
@@ -43,10 +43,10 @@ true
 # ---- composed pipeline: scale -> kmeans -> score the clustering ----
 
 query I
-SELECT count(DISTINCT cluster) FROM sklearn.kmeans(
+SELECT count(DISTINCT cluster) FROM sklearn.preprocessing.kmeans(
   (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm
-   FROM sklearn.standard_scaler(
-     (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm FROM sklearn.iris()),
+   FROM sklearn.preprocessing.standard_scaler(
+     (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm FROM sklearn.datasets.iris()),
      id => 'sample_id')),
   id => 'sample_id', n_clusters => 3);
 ----
@@ -55,11 +55,11 @@ SELECT count(DISTINCT cluster) FROM sklearn.kmeans(
 # ---- metrics over cross_val_predict output ----
 
 query I
-SELECT sklearn.accuracy_score(i.target, p.prediction) > 0.8
-FROM sklearn.cross_val_predict(
-  (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target FROM sklearn.iris()),
+SELECT sklearn.metrics.accuracy_score(i.target, p.prediction) > 0.8
+FROM sklearn.models.cross_val_predict(
+  (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target FROM sklearn.datasets.iris()),
   estimator => 'logistic_regression', target => 'target', id => 'sample_id') p
-JOIN sklearn.iris() i USING (sample_id);
+JOIN sklearn.datasets.iris() i USING (sample_id);
 ----
 true
 
@@ -75,7 +75,7 @@ SELECT * FROM (VALUES
 query II
 SELECT bool_and(fpr BETWEEN 0 AND 1 AND tpr BETWEEN 0 AND 1),
        count(*) FILTER (WHERE threshold IS NULL)
-FROM sklearn.roc_curve((SELECT * FROM scored), y_true := 'y', y_score := 'p');
+FROM sklearn.metrics.roc_curve((SELECT * FROM scored), y_true := 'y', y_score := 'p');
 ----
 true	1
 
@@ -83,14 +83,14 @@ true	1
 query II
 SELECT bool_and(precision BETWEEN 0 AND 1 AND recall BETWEEN 0 AND 1),
        count(*) FILTER (WHERE threshold IS NULL)
-FROM sklearn.precision_recall_curve((SELECT * FROM scored), y_true := 'y', y_score := 'p');
+FROM sklearn.metrics.precision_recall_curve((SELECT * FROM scored), y_true := 'y', y_score := 'p');
 ----
 true	1
 
 # calibration_curve: predicted/observed probabilities per bin, both in [0,1]
 query I
 SELECT bool_and(prob_pred BETWEEN 0 AND 1 AND prob_true BETWEEN 0 AND 1)
-FROM sklearn.calibration_curve((SELECT * FROM scored), y_true := 'y', y_score := 'p', n_bins := 5);
+FROM sklearn.metrics.calibration_curve((SELECT * FROM scored), y_true := 'y', y_score := 'p', n_bins := 5);
 ----
 true
 

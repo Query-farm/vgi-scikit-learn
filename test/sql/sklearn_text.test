@@ -23,7 +23,7 @@ SELECT * FROM (VALUES
 
 # 'the' appears twice in document 1
 query I
-SELECT value FROM sklearn.count_vectorizer((SELECT * FROM docs), id := 'id', text := 'body')
+SELECT value FROM sklearn.preprocessing.count_vectorizer((SELECT * FROM docs), id := 'id', text := 'body')
 WHERE id = 1 AND term = 'the';
 ----
 2
@@ -31,7 +31,7 @@ WHERE id = 1 AND term = 'the';
 # counts sum to the number of tokens in document 1 ("the cat sat on the mat" = 6)
 query I
 SELECT sum(value)
-FROM sklearn.count_vectorizer((SELECT * FROM docs), id := 'id', text := 'body')
+FROM sklearn.preprocessing.count_vectorizer((SELECT * FROM docs), id := 'id', text := 'body')
 WHERE id = 1;
 ----
 6
@@ -40,7 +40,7 @@ WHERE id = 1;
 
 query I
 SELECT count(DISTINCT term) > 0
-FROM sklearn.count_vectorizer((SELECT id, body FROM docs), id := 'id');
+FROM sklearn.preprocessing.count_vectorizer((SELECT id, body FROM docs), id := 'id');
 ----
 true
 
@@ -48,7 +48,7 @@ true
 
 query I
 SELECT count(*)
-FROM sklearn.count_vectorizer((SELECT * FROM docs), id := 'id', text := 'body', stop_words := 'english')
+FROM sklearn.preprocessing.count_vectorizer((SELECT * FROM docs), id := 'id', text := 'body', stop_words := 'english')
 WHERE term = 'the';
 ----
 0
@@ -57,7 +57,7 @@ WHERE term = 'the';
 
 query I
 SELECT count(*) > 0
-FROM sklearn.count_vectorizer((SELECT * FROM docs), id := 'id', text := 'body', ngram_max := 2)
+FROM sklearn.preprocessing.count_vectorizer((SELECT * FROM docs), id := 'id', text := 'body', ngram_max := 2)
 WHERE term LIKE '% %';
 ----
 true
@@ -65,7 +65,7 @@ true
 # ---- tfidf_vectorizer: float weights; the distinctive term ranks first ----
 
 query I
-SELECT term FROM sklearn.tfidf_vectorizer((SELECT * FROM docs), id := 'id', text := 'body')
+SELECT term FROM sklearn.preprocessing.tfidf_vectorizer((SELECT * FROM docs), id := 'id', text := 'body')
 WHERE id = 3 ORDER BY value DESC LIMIT 1;
 ----
 cats

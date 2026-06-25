@@ -15,12 +15,12 @@ statement ok
 CREATE TEMP VIEW iris AS
   SELECT sample_id, sepal_length_cm AS f1, sepal_width_cm AS f2,
          petal_length_cm AS f3, petal_width_cm AS f4, target
-  FROM sklearn.iris();
+  FROM sklearn.datasets.iris();
 
 # Leaderboard: 2 x 3 grid -> 6 combinations, ranked, exactly one carrying a model.
 query II
 SELECT count(*), count(model)
-FROM sklearn.grid_search((SELECT * FROM iris), target := 'target', id := 'sample_id',
+FROM sklearn.models.grid_search((SELECT * FROM iris), target := 'target', id := 'sample_id',
      estimator := union_value(random_forest_classifier := {'n_estimators': [50, 200], 'max_depth': [2, 3, 5]}));
 ----
 6	1
@@ -30,7 +30,7 @@ query I
 SELECT bool_and(model IS NULL OR mean_test_score = max_score)
 FROM (
   SELECT model, mean_test_score, max(mean_test_score) OVER () AS max_score
-  FROM sklearn.grid_search((SELECT * FROM iris), target := 'target', id := 'sample_id',
+  FROM sklearn.models.grid_search((SELECT * FROM iris), target := 'target', id := 'sample_id',
        estimator := union_value(svc := {'C': [0.1, 1.0, 10.0], 'kernel': ['rbf', 'linear']}))
 );
 ----
@@ -39,7 +39,7 @@ true
 # The best model (the row carrying the BLOB) predicts well on the training data.
 statement ok
 CREATE TEMP TABLE best AS
-SELECT model FROM sklearn.grid_search((SELECT * FROM iris), target := 'target', id := 'sample_id',
+SELECT model FROM sklearn.models.grid_search((SELECT * FROM iris), target := 'target', id := 'sample_id',
      estimator := union_value(svc := {'C': [0.1, 1.0, 10.0], 'kernel': ['rbf', 'linear']}))
 WHERE model IS NOT NULL;
 
@@ -48,27 +48,27 @@ SET VARIABLE m = (SELECT model FROM best);
 
 query I
 SELECT avg((p.prediction = i.target)::INT) > 0.9
-FROM sklearn.predict((SELECT * FROM iris), model := getvariable('m'), id := 'sample_id') p
-JOIN sklearn.iris() i USING (sample_id);
+FROM sklearn.models.predict((SELECT * FROM iris), model := getvariable('m'), id := 'sample_id') p
+JOIN sklearn.datasets.iris() i USING (sample_id);
 ----
 true
 
 # model_name persists the refit best model to the registry.
 statement ok
-SELECT 1 FROM sklearn.grid_search((SELECT * FROM iris), target := 'target', id := 'sample_id',
+SELECT 1 FROM sklearn.models.grid_search((SELECT * FROM iris), target := 'target', id := 'sample_id',
      model_name := 'gs_ridge', estimator := union_value(ridge := {'alpha': [0.1, 1.0, 10.0]})) LIMIT 1;
 
 query II
-SELECT estimator, task FROM sklearn.model_info('gs_ridge');
+SELECT estimator, task FROM sklearn.models.model_info('gs_ridge');
 ----
 ridge	regression
 
 statement ok
-SELECT * FROM sklearn.drop_model('gs_ridge');
+SELECT * FROM sklearn.models.drop_model('gs_ridge');
 
 # unknown target -> clear error
 statement error
-SELECT * FROM sklearn.grid_search((SELECT * FROM iris), target := 'nope',
+SELECT * FROM sklearn.models.grid_search((SELECT * FROM iris), target := 'nope',
      estimator := union_value(ridge := {'alpha': [1.0]}));
 ----
 not found in input
@@ -76,7 +76,7 @@ not found in input
 # ---- randomized_search samples n_iter combinations from the same union grid ----
 
 query I
-SELECT count(*) FROM sklearn.randomized_search((SELECT * FROM iris), target := 'target', id := 'sample_id',
+SELECT count(*) FROM sklearn.models.randomized_search((SELECT * FROM iris), target := 'target', id := 'sample_id',
      n_iter := 4, estimator := union_value(random_forest_classifier := {
        'n_estimators': [50, 100, 200], 'max_depth': [2, 3, 5]}));
 ----
@@ -84,18 +84,18 @@ SELECT count(*) FROM sklearn.randomized_search((SELECT * FROM iris), target := '
 
 # the refit best model is on the rank-1 row and predicts
 statement ok
-SET VARIABLE rsm = (SELECT model FROM sklearn.randomized_search((SELECT * FROM iris), target := 'target',
+SET VARIABLE rsm = (SELECT model FROM sklearn.models.randomized_search((SELECT * FROM iris), target := 'target',
      id := 'sample_id', n_iter := 3, estimator := union_value(random_forest_classifier := {
        'n_estimators': [50, 100, 200]})) WHERE model IS NOT NULL LIMIT 1);
 
 query I
-SELECT count(*) FROM sklearn.predict((SELECT * FROM iris), model := getvariable('rsm'), id := 'sample_id');
+SELECT count(*) FROM sklearn.models.predict((SELECT * FROM iris), model := getvariable('rsm'), id := 'sample_id');
 ----
 150
 
 # n_iter is capped at the number of distinct combinations (no error when too large)
 query I
-SELECT count(*) FROM sklearn.randomized_search((SELECT * FROM iris), target := 'target', id := 'sample_id',
+SELECT count(*) FROM sklearn.models.randomized_search((SELECT * FROM iris), target := 'target', id := 'sample_id',
      n_iter := 99, estimator := union_value(ridge := {'alpha': [0.1, 1.0]}));
 ----
 2

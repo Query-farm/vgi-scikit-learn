@@ -24,9 +24,9 @@ SELECT * FROM (VALUES
 # Perfect predictions: R^2 = 1, MSE = 0, MAE = 0
 query III
 SELECT
-  round(sklearn.r2_score(actual, predicted), 6),
-  round(sklearn.mean_squared_error(actual, predicted), 6),
-  round(sklearn.mean_absolute_error(actual, predicted), 6)
+  round(sklearn.metrics.r2_score(actual, predicted), 6),
+  round(sklearn.metrics.mean_squared_error(actual, predicted), 6),
+  round(sklearn.metrics.mean_absolute_error(actual, predicted), 6)
 FROM preds;
 ----
 1.0	0.0	0.0
@@ -37,23 +37,23 @@ CREATE TEMP TABLE cls AS
 SELECT * FROM (VALUES (0,0),(1,1),(0,1),(1,1)) AS t(y, yhat);
 
 query I
-SELECT round(sklearn.accuracy_score(y, yhat), 4) FROM cls;
+SELECT round(sklearn.metrics.accuracy_score(y, yhat), 4) FROM cls;
 ----
 0.75
 
 # added classification losses on the same table (y=[0,1,0,1], yhat=[0,1,1,1])
 query III
-SELECT round(sklearn.hamming_loss(y, yhat), 4),
-       round(sklearn.zero_one_loss(y, yhat), 4),
-       round(sklearn.jaccard_score(y, yhat), 4)
+SELECT round(sklearn.metrics.hamming_loss(y, yhat), 4),
+       round(sklearn.metrics.zero_one_loss(y, yhat), 4),
+       round(sklearn.metrics.jaccard_score(y, yhat), 4)
 FROM cls;
 ----
 0.25	0.25	0.5833
 
 # added regression metrics (non-negative values for log error)
 query II
-SELECT round(sklearn.mean_squared_log_error(actual, predicted), 6),
-       round(sklearn.mean_pinball_loss(actual, predicted), 6)
+SELECT round(sklearn.metrics.mean_squared_log_error(actual, predicted), 6),
+       round(sklearn.metrics.mean_pinball_loss(actual, predicted), 6)
 FROM (VALUES (3.0, 2.5), (1.0, 1.2), (5.0, 4.5)) AS t(actual, predicted);
 ----
 0.011495	0.2
@@ -66,10 +66,10 @@ SELECT * FROM (VALUES
 ) AS t(y, s);
 
 query IIII
-SELECT round(sklearn.roc_auc_score(y, s), 4),
-       round(sklearn.average_precision_score(y, s), 4),
-       round(sklearn.brier_score_loss(y, s), 4),
-       round(sklearn.log_loss(y, s), 4)
+SELECT round(sklearn.metrics.roc_auc_score(y, s), 4),
+       round(sklearn.metrics.average_precision_score(y, s), 4),
+       round(sklearn.metrics.brier_score_loss(y, s), 4),
+       round(sklearn.metrics.log_loss(y, s), 4)
 FROM scored;
 ----
 1.0	1.0	0.1116	0.3856
@@ -83,7 +83,7 @@ SELECT * FROM (VALUES
 ) AS t(grp, actual, predicted);
 
 query II
-SELECT grp, round(sklearn.r2_score(actual, predicted), 4) AS r2
+SELECT grp, round(sklearn.metrics.r2_score(actual, predicted), 4) AS r2
 FROM g GROUP BY grp ORDER BY grp;
 ----
 a	1.0

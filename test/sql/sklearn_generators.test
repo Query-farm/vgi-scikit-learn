@@ -14,63 +14,63 @@ ATTACH 'sklearn' AS sklearn (TYPE vgi, LOCATION '${VGI_SKLEARN_WORKER}');
 # ---- toy datasets ----
 
 query I
-SELECT count(*) FROM sklearn.wine();
+SELECT count(*) FROM sklearn.datasets.wine();
 ----
 178
 
 query I
-SELECT count(*) FROM sklearn.breast_cancer();
+SELECT count(*) FROM sklearn.datasets.breast_cancer();
 ----
 569
 
 # diabetes is regression: target is continuous, no target_name column
 query I
-SELECT count(*) FROM (DESCRIBE SELECT * FROM sklearn.diabetes()) WHERE column_name = 'target_name';
+SELECT count(*) FROM (DESCRIBE SELECT * FROM sklearn.datasets.diabetes()) WHERE column_name = 'target_name';
 ----
 0
 
 # ---- generators: schema width follows arguments ----
 
 query I
-SELECT count(*) FROM sklearn.make_classification(n_samples => 250, n_features => 6, n_classes => 3);
+SELECT count(*) FROM sklearn.datasets.make_classification(n_samples => 250, n_features => 6, n_classes => 3);
 ----
 250
 
 # 6 features + sample_id + target = 8 columns
 query I
-SELECT count(*) FROM (DESCRIBE SELECT * FROM sklearn.make_classification(n_features => 6));
+SELECT count(*) FROM (DESCRIBE SELECT * FROM sklearn.datasets.make_classification(n_features => 6));
 ----
 8
 
 query I
-SELECT count(DISTINCT target) FROM sklearn.make_classification(n_samples => 300, n_classes => 3);
+SELECT count(DISTINCT target) FROM sklearn.datasets.make_classification(n_samples => 300, n_classes => 3);
 ----
 3
 
 # blobs expose a ground-truth cluster column
 query I
-SELECT count(DISTINCT cluster) FROM sklearn.make_blobs(n_samples => 300, centers => 4);
+SELECT count(DISTINCT cluster) FROM sklearn.datasets.make_blobs(n_samples => 300, centers => 4);
 ----
 4
 
 # moons are 2-feature binary
 query II
-SELECT count(*), count(DISTINCT target) FROM sklearn.make_moons(n_samples => 120, noise => 0.1);
+SELECT count(*), count(DISTINCT target) FROM sklearn.datasets.make_moons(n_samples => 120, noise => 0.1);
 ----
 120	2
 
 # circles are 2-feature binary too
 query II
-SELECT count(*), count(DISTINCT target) FROM sklearn.make_circles(n_samples => 120, noise => 0.05);
+SELECT count(*), count(DISTINCT target) FROM sklearn.datasets.make_circles(n_samples => 120, noise => 0.05);
 ----
 120	2
 
 # generators are reproducible for a fixed random_state
 query I
 SELECT count(*) FROM (
-  SELECT feature_0 FROM sklearn.make_regression(n_samples => 50, random_state => 3)
+  SELECT feature_0 FROM sklearn.datasets.make_regression(n_samples => 50, random_state => 3)
   EXCEPT
-  SELECT feature_0 FROM sklearn.make_regression(n_samples => 50, random_state => 3)
+  SELECT feature_0 FROM sklearn.datasets.make_regression(n_samples => 50, random_state => 3)
 );
 ----
 0

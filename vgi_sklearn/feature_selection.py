@@ -109,13 +109,39 @@ class SelectKBest(SinkBuffer[SelectKBestArgs, DrainState]):
         name = "select_k_best"
         description = "Univariate feature scores vs. the target, flagging the top k"
         categories = ["preprocessing", "feature-selection"]
-        tags = {"vgi.columns_md": columns_md(_SELECT_SCHEMA)}
+        tags = {
+            "vgi.result_columns_md": columns_md(_SELECT_SCHEMA),
+            "vgi.doc_llm": (
+                "Table function for univariate feature selection: scores each numeric feature against the "
+                "target independently and flags the top `k`. The table arg is "
+                "`(SELECT feature_cols..., target FROM ...)`; `target :=` names the label column "
+                "(required), `id :=` optionally excludes a column, `k :=` how many features to flag "
+                "(default 10, capped at the feature count), and `score_func :=` picks the test "
+                "(`f_classif`/`chi2`/`mutual_info_classif` for classification, "
+                "`f_regression`/`mutual_info_regression` for regression). Returns one row per feature with "
+                "its score, p-value, and a `selected` boolean — rank by `score DESC` or `SELECT` the "
+                "flagged columns to build the reduced feature set yourself. Buffers the whole input."
+            ),
+            "vgi.doc_md": (
+                "**Select-k-best** — rank features by a univariate test against the target.\n\n"
+                "- Table arg: `(SELECT <features...>, <target> FROM ...)`; `target :=` (required), "
+                "`id :=` (excluded column), `k :=` (top features to flag), `score_func :=`\n"
+                "- `score_func` options: `f_classif`, `chi2`, `mutual_info_classif` (classification); "
+                "`f_regression`, `mutual_info_regression` (regression)\n"
+                "- Returns one row per feature:\n"
+                "  - `feature` — column name\n"
+                "  - `score` — univariate score (higher = more informative)\n"
+                "  - `p_value` — significance (`NULL` for the mutual-information scorers)\n"
+                "  - `selected` — `true` for the top `k`\n"
+                "- Emits scores, not a reduced matrix, so you keep control of which columns to project"
+            ),
+        }
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT feature, score, selected FROM sklearn.select_k_best("
+                    "SELECT feature, score, selected FROM sklearn.preprocessing.select_k_best("
                     "(SELECT sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target "
-                    "FROM sklearn.iris()), target := 'target', k := 2) ORDER BY score DESC"
+                    "FROM sklearn.datasets.iris()), target := 'target', k := 2) ORDER BY score DESC"
                 ),
                 description="Rank iris features by ANOVA F against the species label",
             )
@@ -222,13 +248,35 @@ class VarianceThreshold(SinkBuffer[VarianceThresholdArgs, DrainState]):
         name = "variance_threshold"
         description = "Per-feature variance, flagging features above a threshold (unsupervised filter)"
         categories = ["preprocessing", "feature-selection"]
-        tags = {"vgi.columns_md": columns_md(_VARIANCE_SCHEMA)}
+        tags = {
+            "vgi.result_columns_md": columns_md(_VARIANCE_SCHEMA),
+            "vgi.doc_llm": (
+                "Table function for unsupervised feature selection: computes each numeric feature's "
+                "variance over the whole table and flags those above a cutoff. The table arg is "
+                "`(SELECT feature_cols... FROM ...)`; `id :=` optionally excludes a column and "
+                "`threshold :=` is the variance cutoff (default 0.0, which drops only constant features). "
+                "No target is needed. Returns one row per feature with its variance and a `selected` "
+                "boolean (variance strictly greater than the threshold). Use it as a cheap first pass to "
+                "discard near-constant, low-information columns before modeling; buffers the whole input."
+            ),
+            "vgi.doc_md": (
+                "**Variance threshold** — drop near-constant features (no target needed).\n\n"
+                "- Table arg: `(SELECT <features...> FROM ...)`; `id :=` (excluded column), "
+                "`threshold :=` (variance cutoff, default `0.0` = remove only constants)\n"
+                "- Returns one row per feature:\n"
+                "  - `feature` — column name\n"
+                "  - `variance` — the feature's variance across all rows\n"
+                "  - `selected` — `true` when `variance > threshold`\n"
+                "- An unsupervised filter and a fast first cut before supervised selection like "
+                "`select_k_best`"
+            ),
+        }
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT feature, variance, selected FROM sklearn.variance_threshold("
+                    "SELECT feature, variance, selected FROM sklearn.preprocessing.variance_threshold("
                     "(SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm "
-                    "FROM sklearn.iris()), id := 'sample_id', threshold := 0.5) ORDER BY variance DESC"
+                    "FROM sklearn.datasets.iris()), id := 'sample_id', threshold := 0.5) ORDER BY variance DESC"
                 ),
                 description="Flag iris features whose variance exceeds 0.5",
             )

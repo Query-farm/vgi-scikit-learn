@@ -14,18 +14,18 @@ ATTACH 'sklearn' AS sklearn (TYPE vgi, LOCATION '${VGI_SKLEARN_WORKER}');
 statement ok
 CREATE TEMP VIEW iris_xy AS
   SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target
-  FROM sklearn.iris();
+  FROM sklearn.datasets.iris();
 
 statement ok
 CREATE TEMP VIEW iris_x AS
   SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm
-  FROM sklearn.iris();
+  FROM sklearn.datasets.iris();
 
 # ---- fit a classifier; the summary row reports the training shape ----
 
 query III
 SELECT task, n_samples, n_features
-FROM sklearn.fit((SELECT * FROM iris_xy), model_name => 'iris_rf',
+FROM sklearn.models.fit((SELECT * FROM iris_xy), model_name => 'iris_rf',
                  estimator => 'random_forest_classifier', target => 'target', id => 'sample_id');
 ----
 classification	150	4
@@ -33,12 +33,12 @@ classification	150	4
 # ---- it is now in the registry ----
 
 query II
-SELECT model_name, task FROM sklearn.list_models() WHERE model_name = 'iris_rf';
+SELECT model_name, task FROM sklearn.models.list_models() WHERE model_name = 'iris_rf';
 ----
 iris_rf	classification
 
 query I
-SELECT n_classes FROM sklearn.model_info('iris_rf');
+SELECT n_classes FROM sklearn.models.model_info('iris_rf');
 ----
 3
 
@@ -46,14 +46,14 @@ SELECT n_classes FROM sklearn.model_info('iris_rf');
 
 query I
 SELECT avg(CASE WHEN p.prediction = i.target THEN 1 ELSE 0 END) > 0.9
-FROM sklearn.predict((SELECT * FROM iris_x), model_name => 'iris_rf', id => 'sample_id') p
-JOIN sklearn.iris() i USING (sample_id);
+FROM sklearn.models.predict((SELECT * FROM iris_x), model_name => 'iris_rf', id => 'sample_id') p
+JOIN sklearn.datasets.iris() i USING (sample_id);
 ----
 true
 
 query I
 SELECT count(DISTINCT prediction)
-FROM sklearn.predict((SELECT * FROM iris_x), model_name => 'iris_rf', id => 'sample_id');
+FROM sklearn.models.predict((SELECT * FROM iris_x), model_name => 'iris_rf', id => 'sample_id');
 ----
 3
 
@@ -61,21 +61,21 @@ FROM sklearn.predict((SELECT * FROM iris_x), model_name => 'iris_rf', id => 'sam
 
 query I
 SELECT count(*) FROM (DESCRIBE
-  SELECT * FROM sklearn.predict((SELECT * FROM iris_x), model_name => 'iris_rf', id => 'sample_id', with_proba => true));
+  SELECT * FROM sklearn.models.predict((SELECT * FROM iris_x), model_name => 'iris_rf', id => 'sample_id', with_proba => true));
 ----
 5
 
 # probabilities sum to 1 for every row
 query I
 SELECT bool_and(abs(proba_0 + proba_1 + proba_2 - 1) < 1e-9)
-FROM sklearn.predict((SELECT * FROM iris_x), model_name => 'iris_rf', id => 'sample_id', with_proba => true);
+FROM sklearn.models.predict((SELECT * FROM iris_x), model_name => 'iris_rf', id => 'sample_id', with_proba => true);
 ----
 true
 
 # ---- cross_val_predict scores every row out-of-fold, no model stored ----
 
 query I
-SELECT count(*) FROM sklearn.cross_val_predict((SELECT * FROM iris_xy),
+SELECT count(*) FROM sklearn.models.cross_val_predict((SELECT * FROM iris_xy),
   estimator => 'logistic_regression', target => 'target', id => 'sample_id', cv => 5);
 ----
 150
@@ -89,12 +89,12 @@ CREATE TEMP VIEW iris_cat AS
          CASE WHEN petal_length_cm > 4.9 THEN 'long'
               WHEN petal_length_cm > 2.5 THEN 'medium' ELSE 'short' END AS petal_class,
          target
-  FROM sklearn.iris();
+  FROM sklearn.datasets.iris();
 
 # fit reports 3 features (the string column counts as one feature, not its one-hot width)
 query II
 SELECT task, n_features
-FROM sklearn.fit((SELECT * FROM iris_cat), model_name => 'iris_cat_rf',
+FROM sklearn.models.fit((SELECT * FROM iris_cat), model_name => 'iris_cat_rf',
                  estimator => 'random_forest_classifier', target => 'target', id => 'sample_id');
 ----
 classification	3
@@ -102,12 +102,12 @@ classification	3
 # predict re-applies the same encoding and scores well in-sample
 query I
 SELECT avg(CASE WHEN p.prediction = i.target THEN 1 ELSE 0 END) > 0.9
-FROM sklearn.predict((SELECT sample_id, sepal_width_cm, petal_width_cm,
+FROM sklearn.models.predict((SELECT sample_id, sepal_width_cm, petal_width_cm,
                         CASE WHEN petal_length_cm > 4.9 THEN 'long'
                              WHEN petal_length_cm > 2.5 THEN 'medium' ELSE 'short' END AS petal_class
-                      FROM sklearn.iris()),
+                      FROM sklearn.datasets.iris()),
                      model_name => 'iris_cat_rf', id => 'sample_id') p
-JOIN sklearn.iris() i USING (sample_id);
+JOIN sklearn.datasets.iris() i USING (sample_id);
 ----
 true
 
@@ -115,7 +115,7 @@ true
 
 query II
 SELECT count(*), bool_and(score BETWEEN 0.0 AND 1.0)
-FROM sklearn.cross_val_score((SELECT * FROM iris_xy),
+FROM sklearn.models.cross_val_score((SELECT * FROM iris_xy),
      estimator => 'logistic_regression', target => 'target', id => 'sample_id', cv => 5);
 ----
 5	true
@@ -123,13 +123,13 @@ FROM sklearn.cross_val_score((SELECT * FROM iris_xy),
 # ---- permutation_importance ranks the petal features highest for iris_rf ----
 
 query I
-SELECT count(*) FROM sklearn.permutation_importance((SELECT * FROM iris_xy),
+SELECT count(*) FROM sklearn.models.permutation_importance((SELECT * FROM iris_xy),
      model_name := 'iris_rf', target := 'target');
 ----
 4
 
 query I
-SELECT feature LIKE 'petal%' FROM sklearn.permutation_importance((SELECT * FROM iris_xy),
+SELECT feature LIKE 'petal%' FROM sklearn.models.permutation_importance((SELECT * FROM iris_xy),
      model_name := 'iris_rf', target := 'target')
 ORDER BY importance_mean DESC LIMIT 1;
 ----
@@ -140,7 +140,7 @@ true
 # 3 classes x grid points, all partial-dependence values are probabilities in [0,1]
 query II
 SELECT count(DISTINCT class), bool_and(partial_dependence BETWEEN 0 AND 1)
-FROM sklearn.partial_dependence((SELECT * FROM iris_xy),
+FROM sklearn.models.partial_dependence((SELECT * FROM iris_xy),
      model_name := 'iris_rf', feature := 'petal_length_cm', grid_resolution := 20);
 ----
 3	true
@@ -148,7 +148,7 @@ FROM sklearn.partial_dependence((SELECT * FROM iris_xy),
 # longer petals push P(virginica = class 2) up: PD is higher at the top of the grid
 query I
 SELECT last(partial_dependence ORDER BY feature_value) > first(partial_dependence ORDER BY feature_value)
-FROM sklearn.partial_dependence((SELECT * FROM iris_xy),
+FROM sklearn.models.partial_dependence((SELECT * FROM iris_xy),
      model_name := 'iris_rf', feature := 'petal_length_cm', grid_resolution := 20)
 WHERE class = 2;
 ----
@@ -157,7 +157,7 @@ true
 # ---- a regression model fits and is tagged regression ----
 
 query I
-SELECT task FROM sklearn.fit((SELECT * FROM sklearn.diabetes()), model_name => 'diab_ridge',
+SELECT task FROM sklearn.models.fit((SELECT * FROM sklearn.datasets.diabetes()), model_name => 'diab_ridge',
                              estimator => 'ridge', target => 'target', id => 'sample_id');
 ----
 regression
@@ -165,12 +165,12 @@ regression
 # ---- drop_model removes it ----
 
 query II
-SELECT model_name, dropped FROM sklearn.drop_model('iris_rf');
+SELECT model_name, dropped FROM sklearn.models.drop_model('iris_rf');
 ----
 iris_rf	true
 
 query I
-SELECT count(*) FROM sklearn.model_info('iris_rf');
+SELECT count(*) FROM sklearn.models.model_info('iris_rf');
 ----
 0
 

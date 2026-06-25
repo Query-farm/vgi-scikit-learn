@@ -25,7 +25,7 @@ sklearn_worker`` working for tests. The implementation lives in
 script (which points at ``vgi_sklearn.worker:main``) instead.
 
     ATTACH 'sklearn' (TYPE vgi, LOCATION 'uv run sklearn_worker.py');
-    SELECT * FROM sklearn.iris();
+    SELECT * FROM sklearn.datasets.iris();
 """
 
 from vgi_sklearn.worker import SklearnWorker, main
