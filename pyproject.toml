@@ -147,3 +147,12 @@ warn_unused_ignores = true
 # missing stubs for these third-party imports.
 module = ["sklearn.*", "scipy.*", "skops.*", "joblib.*", "pandas.*"]
 ignore_missing_imports = true
+
+[tool.vgi-lint-check.severity]
+# Per-function `vgi.example_queries` are illustrative documentation — they
+# reference hypothetical tables (a `predictions` table) or a pre-fit model, so
+# they cannot execute standalone. The curated catalog `vgi.executable_examples`
+# are the guaranteed-runnable, must-pass set (VGI906, error). Keep the
+# illustrative-example execution rules advisory rather than gating.
+VGI901 = "info"
+VGI902 = "info"
