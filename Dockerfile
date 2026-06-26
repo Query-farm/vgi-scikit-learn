@@ -27,7 +27,8 @@ LABEL org.opencontainers.image.title="vgi-sklearn" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${GIT_COMMIT}" \
       org.opencontainers.image.licenses="MIT" \
-      farm.query.vgi.volumes='[{"path":"/data","name":"vgi_sklearn_state","purpose":"state","shared":true}]'
+      farm.query.vgi.volumes='[{"path":"/data","name":"vgi_sklearn_state","purpose":"state","shared":true}]' \
+      farm.query.vgi.transports='["tcp","http"]'
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \

@@ -25,7 +25,7 @@ classifiers = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    "vgi-python[http]>=0.8.5",
+    "vgi-python[http]>=0.8.7",
     "scikit-learn>=1.5",
     "numpy",
     "skops>=0.11",
@@ -37,8 +37,8 @@ dependencies = [
 # the base deps: the published Docker image installs `.[serve]`, while a plain
 # `pip install vgi-sklearn` for an on-host stdio worker stays lean.
 serve = [
-    "vgi-python[http,oauth]>=0.8.5",
-    "vgi-rpc[sentry]",
+    "vgi-python[http,oauth]>=0.8.7",
+    "vgi-rpc[sentry]>=0.21.0",
     "authlib",
 ]
 
