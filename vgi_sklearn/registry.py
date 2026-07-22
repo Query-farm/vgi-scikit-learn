@@ -22,9 +22,23 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import skops.io as sio
-
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+
+def _sio() -> Any:
+    """Import ``skops.io`` on first use.
+
+    ``skops.io._trusted_types`` walks scikit-learn's whole module tree to build
+    its trusted-type list, which dominates this worker's start-up (tens of
+    seconds on a cold interpreter). The VGI extension cold-starts a worker
+    subprocess for a pool miss, and a scan blocked before its first batch cannot
+    be interrupted, so paying that cost at import time makes the *first* batch of
+    the first scan arbitrarily late and wedges the client (VGI911). Only the
+    registry's serialize/deserialize paths need skops, so it is imported there.
+    """
+    import skops.io
+
+    return skops.io
 
 # Estimators are persisted with skops (not pickle): loading reconstructs only a
 # known set of types instead of executing arbitrary code. We additionally
@@ -39,12 +53,13 @@ class UntrustedModelError(ValueError):
 
 def _skops_dumps(estimator: Any) -> bytes:
     """Serialize an estimator to skops bytes."""
-    data: bytes = sio.dumps(estimator)
+    data: bytes = _sio().dumps(estimator)
     return data
 
 
 def _skops_loads(data: bytes) -> Any:
     """Safely load a skops-serialized estimator, trusting only sklearn/numpy/scipy types."""
+    sio = _sio()
     untrusted = sio.get_untrusted_types(data=data)
     disallowed = [t for t in untrusted if not t.startswith(_TRUSTED_PREFIXES)]
     if disallowed:

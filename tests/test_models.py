@@ -138,9 +138,15 @@ class TestModelBlob:
     def test_rejects_untrusted_types(self, monkeypatch) -> None:
         # The safe-loader must refuse types outside sklearn/numpy/scipy, even if
         # skops itself would surface them as "untrusted to confirm".
+        import skops.io
+
         import vgi_sklearn.registry as reg
 
-        monkeypatch.setattr(reg.sio, "get_untrusted_types", lambda **_: ["os.system", "sklearn.foo.Bar"])
+        # Patch the real module: the registry imports skops lazily (see _sio),
+        # so there is no module-level `reg.sio` attribute to patch through.
+        monkeypatch.setattr(
+            skops.io, "get_untrusted_types", lambda **_: ["os.system", "sklearn.foo.Bar"]
+        )
         with pytest.raises(reg.UntrustedModelError, match="os.system"):
             reg._skops_loads(b"whatever")
 
