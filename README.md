@@ -307,7 +307,7 @@ named `STRUCT`; the target can be numeric **or** string class labels.
 CREATE TABLE segment_models AS
 SELECT (customer_id % 3) AS segment,       -- use your real segment column
        sklearn.models.fit_model({'tenure': tenure, 'monthly_spend': monthly_spend, 'support_tickets': support_tickets},
-                         churned, estimator := 'gradient_boosting_classifier', hyperparams := '{}') AS m
+                         churned, 'gradient_boosting_classifier', '{}') AS m
 FROM churn
 GROUP BY segment;
 

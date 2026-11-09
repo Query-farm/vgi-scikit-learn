@@ -15,7 +15,7 @@ segment" research:
     -- a model per region
     CREATE TABLE models AS
       SELECT region, sklearn.models.fit_model({'tenure': tenure, 'spend': spend}, churned,
-                                       estimator := 'gradient_boosting_classifier') AS m
+                                       'gradient_boosting_classifier', '{}') AS m
       FROM customers GROUP BY region;
 
     -- score each customer with their region's model
@@ -154,7 +154,7 @@ class FitModel(AggregateFunction[FitState]):
                 "Buffers each group's rows, fits an estimator, and emits one result `STRUCT` per group; "
                 "`GROUP BY` supplies the partitioning that table functions cannot.\n\n"
                 "- Args: feature `STRUCT` (by-name alignment); `target` (numeric or string labels, dtype "
-                "preserved); `estimator :=` name; `hyperparams :=` JSON (**required**, pass `'{}'`)\n"
+                "preserved); `estimator` name; `hyperparams` JSON (**required**, pass `'{}'`), both positional\n"
                 "- Returns per group: a `STRUCT(model BLOB, estimator, task, n_samples, n_features, "
                 "n_classes, train_score)`\n"
                 "- The per-segment modeling entry point; feed the `.model` BLOB to `predict_one` / "
@@ -166,7 +166,7 @@ class FitModel(AggregateFunction[FitState]):
                 sql=(
                     "SELECT region, sklearn.models.fit_model("
                     "{'tenure': tenure, 'spend': spend}, churned, "
-                    "estimator := 'gradient_boosting_classifier', hyperparams := '{}') AS m "
+                    "'gradient_boosting_classifier', '{}') AS m "
                     "FROM (VALUES ('east', 12, 30.0, 0), ('east', 3, 80.0, 1), "
                     "('west', 24, 20.0, 0), ('west', 1, 90.0, 1)) "
                     "AS customers(region, tenure, spend, churned) GROUP BY region"
