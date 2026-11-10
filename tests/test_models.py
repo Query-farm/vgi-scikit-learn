@@ -144,9 +144,7 @@ class TestModelBlob:
 
         # Patch the real module: the registry imports skops lazily (see _sio),
         # so there is no module-level `reg.sio` attribute to patch through.
-        monkeypatch.setattr(
-            skops.io, "get_untrusted_types", lambda **_: ["os.system", "sklearn.foo.Bar"]
-        )
+        monkeypatch.setattr(skops.io, "get_untrusted_types", lambda **_: ["os.system", "sklearn.foo.Bar"])
         with pytest.raises(reg.UntrustedModelError, match="os.system"):
             reg._skops_loads(b"whatever")
 

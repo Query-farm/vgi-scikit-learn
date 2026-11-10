@@ -40,6 +40,7 @@ def _sio() -> Any:
 
     return skops.io
 
+
 # Estimators are persisted with skops (not pickle): loading reconstructs only a
 # known set of types instead of executing arbitrary code. We additionally
 # restrict the trusted set to the scikit-learn / numpy / scipy namespaces, so a
@@ -364,7 +365,7 @@ def now_iso() -> str:
 
 
 def pack_model(estimator: Any, meta: ModelMetadata) -> bytes:
-    """Serialize ``(estimator, metadata)`` into one self-describing BLOB."""
+    """Serialize ``(estimator, metadata)`` into one self-describing `BLOB`."""
     est_bytes = _skops_dumps(estimator)
     meta_bytes = json.dumps(meta.to_dict(), default=str).encode("utf-8")
     return struct.pack(">I", len(meta_bytes)) + meta_bytes + est_bytes
@@ -380,33 +381,33 @@ def _split_blob(blob: bytes) -> tuple[bytes, bytes]:
 
 
 def unpack_meta(blob: bytes) -> ModelMetadata:
-    """Read just the metadata from a model BLOB (cheap; no estimator load)."""
+    """Read just the metadata from a model `BLOB` (cheap; no estimator load)."""
     meta_bytes, _ = _split_blob(blob)
     return ModelMetadata.from_dict(json.loads(meta_bytes))
 
 
 def unpack_model(blob: bytes) -> tuple[Any, ModelMetadata]:
-    """Read both estimator and metadata from a model BLOB (skops safe-load)."""
+    """Read both estimator and metadata from a model `BLOB` (skops safe-load)."""
     meta_bytes, est_bytes = _split_blob(blob)
     meta = ModelMetadata.from_dict(json.loads(meta_bytes))
     return _skops_loads(est_bytes), meta
 
 
 def pack_transformer(transformer: Any, meta: TransformerMetadata) -> bytes:
-    """Serialize ``(transformer, metadata)`` into one self-describing BLOB."""
+    """Serialize ``(transformer, metadata)`` into one self-describing `BLOB`."""
     obj_bytes = _skops_dumps(transformer)
     meta_bytes = json.dumps(meta.to_dict(), default=str).encode("utf-8")
     return struct.pack(">I", len(meta_bytes)) + meta_bytes + obj_bytes
 
 
 def unpack_transformer_meta(blob: bytes) -> TransformerMetadata:
-    """Read just the metadata from a transformer BLOB (cheap; no object load)."""
+    """Read just the metadata from a transformer `BLOB` (cheap; no object load)."""
     meta_bytes, _ = _split_blob(blob)
     return TransformerMetadata.from_dict(json.loads(meta_bytes))
 
 
 def unpack_transformer(blob: bytes) -> tuple[Any, TransformerMetadata]:
-    """Read both transformer and metadata from a transformer BLOB (skops safe-load)."""
+    """Read both transformer and metadata from a transformer `BLOB` (skops safe-load)."""
     meta_bytes, obj_bytes = _split_blob(blob)
     meta = TransformerMetadata.from_dict(json.loads(meta_bytes))
     return _skops_loads(obj_bytes), meta
