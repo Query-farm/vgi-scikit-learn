@@ -7,6 +7,7 @@ DuckDB.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 
@@ -35,6 +36,8 @@ def field(
 
 def _sql_type(t: pa.DataType) -> str:
     """Map a common Arrow type to a readable DuckDB-ish type name."""
+    if pa.types.is_dictionary(t):
+        return _sql_type(t.value_type)
     if pa.types.is_int64(t):
         return "BIGINT"
     if pa.types.is_int32(t):
@@ -58,33 +61,45 @@ def _sql_type(t: pa.DataType) -> str:
     return str(t)
 
 
-def columns_md(schema: pa.Schema, *, note: str | None = None) -> str:
-    """Render a Markdown table of a table function's RETURN columns.
+def result_columns_schema(schema: pa.Schema) -> str:
+    """Render a table function's fixed RETURN columns as ``vgi.result_columns_schema``.
 
-    Feeds the ``vgi.columns_md`` tag: DuckDB cannot expose a VGI
-    table-function schema, so this documents it. Reads each field's
-    ``comment`` metadata.
+    Emits a JSON array of ``{name, type, description}`` objects, one per field,
+    reading each field's ``comment`` metadata. Deriving it from the real output
+    schema keeps the declared and the returned columns in lockstep.
     """
-    lines = ["| Column | Type | Description |", "| --- | --- | --- |"]
+    columns = []
     for f in schema:
         desc = ""
         if f.metadata and b"comment" in f.metadata:
             desc = f.metadata[b"comment"].decode("utf-8")
-        lines.append(f"| `{f.name}` | {_sql_type(f.type)} | {desc} |")
+        columns.append({"name": f.name, "type": _sql_type(f.type), "description": desc})
+    return json.dumps(columns, separators=(",", ":"))
+
+
+def dynamic_columns_md(rows: list[tuple[str, str, str]], *, note: str | None = None) -> str:
+    """Render ``vgi.result_dynamic_columns_md`` from (name, type, description) rows.
+
+    For functions whose output schema is computed at bind from the arguments or
+    the input relation: one ``Name | Type | Description`` table, where
+    placeholder names such as ``<feature>`` stand for argument-driven columns.
+    """
+    lines = ["| Name | Type | Description |", "| --- | --- | --- |"]
+    lines += [f"| `{n}` | {t} | {d} |" for n, t, d in rows]
     md = "\n".join(lines)
     if note:
         md += f"\n\n{note}"
     return md
 
 
-def columns_md_rows(rows: list[tuple[str, str, str]], *, note: str | None = None) -> str:
-    """Render the Markdown table from explicit (column, type, description) rows.
+def dynamic_variants_md(variants: list[tuple[str, list[tuple[str, str, str]]]], *, note: str | None = None) -> str:
+    """Render ``vgi.result_dynamic_columns_md`` with one captioned table per variant.
 
-    For functions whose output schema is computed dynamically at bind.
+    Each ``(caption, rows)`` pair becomes a ``### caption`` heading followed by
+    its ``Name | Type | Description`` table, for functions whose result columns
+    differ by argument (e.g. classifier vs. regressor output).
     """
-    lines = ["| Column | Type | Description |", "| --- | --- | --- |"]
-    lines += [f"| `{n}` | {t} | {d} |" for n, t, d in rows]
-    md = "\n".join(lines)
+    md = "\n\n".join(f"### {caption}\n\n{dynamic_columns_md(rows)}" for caption, rows in variants)
     if note:
         md += f"\n\n{note}"
     return md

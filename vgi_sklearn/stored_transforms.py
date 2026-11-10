@@ -57,7 +57,7 @@ from .registry import (
     unpack_transformer_meta,
     validate_name,
 )
-from .schema_utils import columns_md, columns_md_rows
+from .schema_utils import dynamic_variants_md, result_columns_schema
 from .schema_utils import field as sfield
 
 
@@ -144,7 +144,9 @@ class FitTransformerArgs:
     transformer_name: Annotated[
         str, Arg("transformer_name", default="", doc="Name to store the fitted transformer under (optional).")
     ]
-    kind: Annotated[str, Arg("kind", default="standard_scaler", doc="Transformer kind, e.g. 'standard_scaler', 'pca'.")]
+    kind: Annotated[
+        str, Arg("kind", default="standard_scaler", doc="Transformer kind to fit.", choices=TRANSFORMER_KINDS)
+    ]
     id: Annotated[str, Arg("id", default="", doc="Optional id column to exclude from features.")]
     params: Annotated[str, Arg("params", default="", doc="JSON object of transformer parameters.")]
 
@@ -169,7 +171,7 @@ def _output_names(feats: list[str], n_output: int) -> list[str]:
 
 
 class FitTransformer(SinkBuffer[FitTransformerArgs, DrainState]):
-    """Buffer a training table, fit a transformer, return it as a BLOB; persist if named."""
+    """Buffer a training table, fit a transformer, return it as a `BLOB`; persist if named."""
 
     FunctionArguments: ClassVar[type] = FitTransformerArgs
 
@@ -180,10 +182,10 @@ class FitTransformer(SinkBuffer[FitTransformerArgs, DrainState]):
         description = "Fit a transformer (scaler/PCA/imputer/...) and return it as a BLOB; persist if named"
         categories = ["preprocessing", "registry"]
         tags = {
-            "vgi.result_columns_md": columns_md(_FIT_TRANSFORMER_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_FIT_TRANSFORMER_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that fits a *reusable* transformer on a training table and returns it as a "
-                "self-contained BLOB -- the persistent counterpart of the one-shot transforms, so you can "
+                "self-contained `BLOB` -- the persistent counterpart of the one-shot transforms, so you can "
                 "fit on training data and re-apply to new data with `apply_transform`. It buffers the "
                 "numeric feature relation `(SELECT ...)` (Arg(0)), builds a transformer of the given "
                 "`kind :=` (`'standard_scaler'`, `'minmax_scaler'`, `'robust_scaler'`, `'maxabs_scaler'`, "
@@ -191,17 +193,17 @@ class FitTransformer(SinkBuffer[FitTransformerArgs, DrainState]):
                 "`'binarizer'`, `'kbins_discretizer'`, `'pca'`, `'truncated_svd'`) with optional JSON "
                 "`params :=`, fits it, and persists to the registry only if `transformer_name :=` is given. "
                 "`id :=` excludes a key column from features. It returns one summary row: the name, kind, "
-                "input/output counts, output column names, and the `transformer` BLOB."
+                "input/output counts, output column names, and the `transformer` `BLOB`."
             ),
             "vgi.doc_md": (
-                "**Fit transformer** — fit a reusable scaler/PCA/imputer and return it as a BLOB.\n\n"
+                "**Fit transformer** — fit a reusable scaler/PCA/imputer and return it as a `BLOB`.\n\n"
                 "The stored-model counterpart to the one-shot transforms: fit once on training data, then "
                 "re-apply to new rows via `apply_transform` (saved to the registry only when named).\n\n"
                 "- Input: `(SELECT ...)` numeric training table; `id :=` column excluded from features\n"
                 "- `kind :=` one of the scalers/`pca`/`truncated_svd`/`simple_imputer`/`kbins_discretizer`/"
                 "etc.; `params :=` a JSON object of transformer params; `transformer_name :=` to persist\n"
                 "- Output (one row): `transformer_name`, `kind`, `n_features`, `n_output`, `output_names`, "
-                "and the `transformer` BLOB\n"
+                "and the `transformer` `BLOB`\n"
                 "- Output width is fixed at fit time (feature names preserved, or `component_1..k` for "
                 "reducers), so `apply_transform` has a stable schema"
             ),
@@ -329,19 +331,28 @@ class ApplyTransform(TableInOutGenerator[ApplyTransformArgs]):
         description = "Stream a table through a stored, already-fitted transformer"
         categories = ["preprocessing", "registry", "inference"]
         tags = {
-            "vgi.result_columns_md": columns_md_rows(
-                [],
-                note=(
-                    "One column per transformer output (DOUBLE, or BIGINT for kbins_discretizer): the "
-                    "fit-time output names -- the input feature names when width is preserved, else "
-                    "`component_1..k`. If an `id` column is named, it is carried through as the first column."
-                ),
+            "vgi.result_dynamic_columns_md": dynamic_variants_md(
+                [
+                    (
+                        "Scalers, imputers, decompositions",
+                        [
+                            (
+                                "<output>",
+                                "DOUBLE",
+                                "One column per transformer output, named as at fit time: the input feature "
+                                "names when width is preserved, else `component_1..k`.",
+                            )
+                        ],
+                    ),
+                    ("kbins_discretizer", [("<feature>", "BIGINT", "One bin-index column per input feature.")]),
+                ],
+                note="If an `id` column is named, it is carried through as the first column.",
             ),
             "vgi.doc_llm": (
                 "Table function that streams a table through an already-fitted transformer (the inference "
                 "counterpart of `fit_transformer`, mirroring how `predict` consumes a stored model). Pass "
                 "the data as `(SELECT ...)` (Arg(0)) and identify the transformer with **either** "
-                "`transformer_name :=` (a stored name) **or** `transformer :=` (a BLOB from "
+                "`transformer_name :=` (a stored name) **or** `transformer :=` (a `BLOB` from "
                 "`fit_transformer`). Features are aligned by name -- the input must contain the "
                 "transformer's feature columns (extra columns are ignored, missing ones raise at bind) -- "
                 "and `id :=` carries a key through as the first column. It emits the fit-time output columns "
@@ -356,7 +367,7 @@ class ApplyTransform(TableInOutGenerator[ApplyTransformArgs]):
                 "- Input: `(SELECT ...)` table containing the transformer's feature columns; `id :=` "
                 "passthrough column\n"
                 "- Identify the transformer by **`transformer_name :=`** (stored) **or** `transformer :=` "
-                "(a BLOB) -- one or the other\n"
+                "(a `BLOB`) -- one or the other\n"
                 "- Output: the fit-time output columns (`DOUBLE`, or `BIGINT` for `kbins_discretizer`) -- "
                 "feature names when width is preserved, else `component_1..k`\n"
                 "- Missing required feature columns error at bind; extra input columns are ignored"
@@ -365,7 +376,8 @@ class ApplyTransform(TableInOutGenerator[ApplyTransformArgs]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.preprocessing.apply_transform((SELECT * FROM sklearn.datasets.iris()), "
+                    "SELECT sample_id, sepal_length_cm, sepal_width_cm FROM sklearn.preprocessing.apply_transform("
+                    "(SELECT * FROM sklearn.datasets.iris()), "
                     "transformer_name := 'sc', id := 'sample_id')"
                 ),
                 description="Apply the stored 'sc' transformer to new data",
@@ -487,7 +499,7 @@ class ListTransformers(TableFunctionGenerator[_NoArgs]):
         description = "List all stored transformers"
         categories = ["preprocessing", "registry"]
         tags = {
-            "vgi.result_columns_md": columns_md(_TRANSFORMER_INFO_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_TRANSFORMER_INFO_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that lists every transformer persisted in the registry by `fit_transformer` "
                 "(a separate namespace from `list_models`, so the two never mix). Takes no arguments and "
@@ -508,7 +520,8 @@ class ListTransformers(TableFunctionGenerator[_NoArgs]):
         }
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.preprocessing.list_transformers()", description="List stored transformers"
+                sql="SELECT transformer_name, kind, n_output FROM sklearn.preprocessing.list_transformers()",
+                description="List stored transformers",
             )
         ]
 
@@ -555,7 +568,7 @@ class DropTransformer(TableFunctionGenerator[DropTransformerArgs]):
         description = "Delete a transformer from the registry"
         categories = ["preprocessing", "registry"]
         tags = {
-            "vgi.result_columns_md": columns_md(_DROP_TRANSFORMER_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_DROP_TRANSFORMER_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that deletes a stored transformer from the registry by name. Pass the "
                 "transformer name positionally (Arg(0), e.g. `drop_transformer('sc')`); it removes the "
@@ -578,7 +591,7 @@ class DropTransformer(TableFunctionGenerator[DropTransformerArgs]):
         }
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.preprocessing.drop_transformer('sc')",
+                sql="SELECT dropped FROM sklearn.preprocessing.drop_transformer('sc')",
                 description="Delete a stored transformer",
             )
         ]

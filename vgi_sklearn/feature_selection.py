@@ -29,8 +29,8 @@ from vgi.table_function import BindParams
 from vgi_rpc.rpc import OutputCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
-from .schema_utils import columns_md
 from .schema_utils import field as sfield
+from .schema_utils import result_columns_schema
 
 
 def _features_excluding(input_schema: pa.Schema, *exclude: str) -> list[str]:
@@ -83,7 +83,8 @@ class SelectKBestArgs:
         Arg(
             "score_func",
             default="f_classif",
-            doc="f_classif, f_regression, mutual_info_classif, mutual_info_regression, or chi2.",
+            doc="Univariate test used to score each feature.",
+            choices=("f_classif", "f_regression", "mutual_info_classif", "mutual_info_regression", "chi2"),
         ),
     ]
 
@@ -110,7 +111,7 @@ class SelectKBest(SinkBuffer[SelectKBestArgs, DrainState]):
         description = "Univariate feature scores vs. the target, flagging the top k"
         categories = ["preprocessing", "feature-selection"]
         tags = {
-            "vgi.result_columns_md": columns_md(_SELECT_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_SELECT_SCHEMA),
             "vgi.doc_llm": (
                 "Table function for univariate feature selection: scores each numeric feature against the "
                 "target independently and flags the top `k`. The table arg is "
@@ -249,7 +250,7 @@ class VarianceThreshold(SinkBuffer[VarianceThresholdArgs, DrainState]):
         description = "Per-feature variance, flagging features above a threshold (unsupervised filter)"
         categories = ["preprocessing", "feature-selection"]
         tags = {
-            "vgi.result_columns_md": columns_md(_VARIANCE_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_VARIANCE_SCHEMA),
             "vgi.doc_llm": (
                 "Table function for unsupervised feature selection: computes each numeric feature's "
                 "variance over the whole table and flags those above a cutoff. The table arg is "

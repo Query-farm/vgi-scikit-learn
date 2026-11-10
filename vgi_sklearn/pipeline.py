@@ -35,7 +35,7 @@ from vgi_rpc.rpc import OutputCollector
 from .buffering import DrainState, SinkBuffer, input_schema_of
 from .models import _ESTIMATORS, _FIT_SCHEMA, _fit_and_emit, _parse_params, build_estimator
 from .registry import validate_name
-from .schema_utils import columns_md
+from .schema_utils import result_columns_schema
 from .stored_transforms import TRANSFORMER_KINDS, _build
 
 
@@ -89,29 +89,29 @@ class FitPipeline(SinkBuffer[FitPipelineArgs, DrainState]):
         description = "Fit preprocessing steps + an estimator as one model; predict with the usual 'predict'"
         categories = ["models", "supervised", "pipeline"]
         tags = {
-            "vgi.result_columns_md": columns_md(_FIT_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_FIT_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that chains preprocessing transformers and a final estimator into one "
                 "scikit-learn `Pipeline`, fits the whole thing on the buffered training relation "
-                "`(SELECT ...)` (Arg(0)), and stores it as an ordinary model BLOB. Pass `steps :=` a JSON "
+                "`(SELECT ...)` (Arg(0)), and stores it as an ordinary model `BLOB`. Pass `steps :=` a JSON "
                 'array of `{"kind": ..., "params": {...}}` transformers (same kinds as `fit_transformer`, '
                 "e.g. simple_imputer -> standard_scaler -> pca), the final `estimator :=` name, the required "
                 "`target :=` label column, an optional `id :=` to exclude, estimator `params :=` JSON, and "
                 "`model_name :=` to persist. String features are one-hot-encoded ahead of the steps. It "
-                "returns the same one-row fit summary + `model` BLOB as `fit`, and the stored artifact is a "
+                "returns the same one-row fit summary + `model` `BLOB` as `fit`, and the stored artifact is a "
                 "normal model — score it with the usual `predict` (no `apply_pipeline` exists)."
             ),
             "vgi.doc_md": (
                 "**fit_pipeline** — fit preprocessing steps + an estimator as a single stored model.\n\n"
                 "Builds a `Pipeline([steps..., estimator])`, fits it on the buffered training table, and "
-                "saves it as a normal model BLOB; everything that consumes a model (`predict`, "
+                "saves it as a normal model `BLOB`; everything that consumes a model (`predict`, "
                 "`cross_val_predict`, `permutation_importance`) then works unchanged.\n\n"
                 "- Input: `(SELECT ...)` training table (features + target [+ id])\n"
                 "- `steps :=` JSON array of `{kind, params}` transformers; `estimator :=` final estimator; "
                 "`target :=` label column (**required**); `id :=` excluded passthrough; `params :=` estimator "
                 "hyperparams JSON; `model_name :=` to persist to the registry\n"
                 "- Output: the `fit` summary row (`model_name`, `estimator`, `task`, `n_features`, "
-                "`train_score`, ...) plus the `model` BLOB\n"
+                "`train_score`, ...) plus the `model` `BLOB`\n"
                 "- String columns one-hot-encode before the steps; predict with the standard `predict` — "
                 "there is intentionally no `apply_pipeline`"
             ),

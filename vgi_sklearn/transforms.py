@@ -33,28 +33,28 @@ from vgi_rpc.rpc import OutputCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
 from .features import rows_from_table
-from .schema_utils import columns_md_rows
+from .schema_utils import dynamic_columns_md
 from .schema_utils import field as sfield
 
 _ID_NOTE = "If an `id` column is named, it is carried through unchanged as the first column."
 
 
 def _scaler_md(value_type: str, value_desc: str) -> str:
-    return columns_md_rows(
-        [],
-        note=(f"One {value_type} column per input feature (same name as the input), {value_desc} " + _ID_NOTE),
+    return dynamic_columns_md(
+        [("<feature>", value_type, f"One column per input feature (same name as the input): {value_desc}")],
+        note=_ID_NOTE,
     )
 
 
-_COMPONENTS_MD = columns_md_rows(
+_COMPONENTS_MD = dynamic_columns_md(
     [("component_<i>", "DOUBLE", "Projection onto component i (one per kept component).")],
     note=_ID_NOTE,
 )
-_CLUSTER_MD = columns_md_rows(
+_CLUSTER_MD = dynamic_columns_md(
     [("cluster", "INTEGER", "Assigned cluster label (-1 = noise for density methods).")],
     note=_ID_NOTE,
 )
-_OUTLIER_MD = columns_md_rows(
+_OUTLIER_MD = dynamic_columns_md(
     [
         ("anomaly_score", "DOUBLE", "Anomaly score; higher = more anomalous."),
         ("is_outlier", "INTEGER", "1 if flagged as an outlier, else 0."),
@@ -137,11 +137,29 @@ class _BufferingTransform[TArgs: _BaseArgs](SinkBuffer[TArgs, DrainState]):
         out.emit(pa.RecordBatch.from_pydict(columns, schema=params.output_schema))
 
 
-def _ex(name: str, extra: str = "") -> list[FunctionExample]:
+# What each transform family's example selects from the output: the columns that
+# family produces (VGI514 -- a bare ``SELECT *`` teaches nothing about the result).
+_SCALED = ("sample_id, sepal_length_cm, petal_length_cm", "")
+_COMPONENTS = ("sample_id, component_1, component_2", "")
+_CLUSTERS = ("cluster, count(*) AS n_samples", " GROUP BY cluster ORDER BY cluster")
+_OUTLIERS = ("sample_id, anomaly_score", " WHERE is_outlier = 1 ORDER BY anomaly_score DESC")
+
+
+# The transforms take numeric features only, so examples feed the four iris
+# measurements (plus the id) rather than the whole table with its string species.
+_IRIS_FEATURES = (
+    "SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm FROM sklearn.datasets.iris()"
+)
+
+
+def _ex(name: str, extra: str = "", *, shape: tuple[str, str] = _SCALED) -> list[FunctionExample]:
     args = f", {extra}" if extra else ""
+    select, tail = shape
     return [
         FunctionExample(
-            sql=f"SELECT * FROM sklearn.preprocessing.{name}((SELECT * FROM sklearn.datasets.iris()), id => 'sample_id'{args})",  # noqa: E501
+            sql=(
+                f"SELECT {select} FROM sklearn.preprocessing.{name}(({_IRIS_FEATURES}), id => 'sample_id'{args}){tail}"
+            ),
             description=f"Apply {name} to the iris features",
         )
     ]
@@ -169,11 +187,11 @@ class StandardScalerFn(_BufferingTransform[_BaseArgs]):
         categories = ["preprocessing", "scaling"]
         examples = _ex("standard_scaler")
         tags = {
-            "vgi.result_columns_md": _scaler_md("DOUBLE", "the scaled value."),
+            "vgi.result_dynamic_columns_md": _scaler_md("DOUBLE", "the scaled value."),
             "vgi.doc_llm": (
                 "Table function that z-score standardizes every numeric feature: it buffers the whole input "
                 "relation `(SELECT ...)` (Arg(0)), fits a `StandardScaler` once, and emits `(value - mean) / "
-                "std` per feature. Each non-`id` input column becomes a same-named `DOUBLE` output column "
+                "std` per feature. Each non-`id` input column becomes a same-named ``DOUBLE`` output column "
                 "(zero mean, unit variance across rows); name an `id` column to carry a key through unchanged "
                 "as the first column. Use it before distance- or gradient-based estimators (SVM, KNN, linear "
                 "models, neural nets) that assume comparably scaled inputs; it is sensitive to outliers, so "
@@ -214,7 +232,7 @@ class MinMaxScalerFn(_BufferingTransform[_BaseArgs]):
         categories = ["preprocessing", "scaling"]
         examples = _ex("minmax_scaler")
         tags = {
-            "vgi.result_columns_md": _scaler_md("DOUBLE", "the scaled value."),
+            "vgi.result_dynamic_columns_md": _scaler_md("DOUBLE", "the scaled value."),
             "vgi.doc_llm": (
                 "Table function that linearly rescales every numeric feature into `[0, 1]` via "
                 "`(x - min) / (max - min)`. It buffers the input relation `(SELECT ...)` (Arg(0)), fits a "
@@ -259,7 +277,7 @@ class RobustScalerFn(_BufferingTransform[_BaseArgs]):
         categories = ["preprocessing", "scaling"]
         examples = _ex("robust_scaler")
         tags = {
-            "vgi.result_columns_md": _scaler_md("DOUBLE", "the scaled value."),
+            "vgi.result_dynamic_columns_md": _scaler_md("DOUBLE", "the scaled value."),
             "vgi.doc_llm": (
                 "Table function that scales each numeric feature using outlier-robust statistics: it "
                 "subtracts the column median and divides by the interquartile range (IQR, the 75th-25th "
@@ -295,7 +313,7 @@ class RobustScalerFn(_BufferingTransform[_BaseArgs]):
 class NormalizerArgs(_BaseArgs):
     """Arguments for the normalizer function."""
 
-    norm: Annotated[str, Arg("norm", default="l2", doc="Norm to use: 'l1', 'l2', or 'max'.")]
+    norm: Annotated[str, Arg("norm", default="l2", doc="Norm each row is scaled to.", choices=("l1", "l2", "max"))]
 
 
 class NormalizerFn(_BufferingTransform[NormalizerArgs]):
@@ -311,7 +329,7 @@ class NormalizerFn(_BufferingTransform[NormalizerArgs]):
         categories = ["preprocessing", "scaling"]
         examples = _ex("normalizer", "norm => 'l2'")
         tags = {
-            "vgi.result_columns_md": _scaler_md("DOUBLE", "the normalized value."),
+            "vgi.result_dynamic_columns_md": _scaler_md("DOUBLE", "the normalized value."),
             "vgi.doc_llm": (
                 "Table function that rescales each *row* (sample) to unit norm — it divides every feature in "
                 "a row by that row's norm, so the per-row vector length becomes 1. Pass the feature relation "
@@ -347,7 +365,15 @@ class NormalizerFn(_BufferingTransform[NormalizerArgs]):
 class ImputerArgs(_BaseArgs):
     """Arguments for the imputer function."""
 
-    strategy: Annotated[str, Arg("strategy", default="mean", doc="mean, median, most_frequent, or constant.")]
+    strategy: Annotated[
+        str,
+        Arg(
+            "strategy",
+            default="mean",
+            doc="How missing values are filled.",
+            choices=("mean", "median", "most_frequent", "constant"),
+        ),
+    ]
 
 
 class SimpleImputerFn(_BufferingTransform[ImputerArgs]):
@@ -363,7 +389,7 @@ class SimpleImputerFn(_BufferingTransform[ImputerArgs]):
         categories = ["preprocessing", "imputation"]
         examples = _ex("simple_imputer", "strategy => 'median'")
         tags = {
-            "vgi.result_columns_md": _scaler_md("DOUBLE", "the imputed value."),
+            "vgi.result_dynamic_columns_md": _scaler_md("DOUBLE", "the imputed value."),
             "vgi.doc_llm": (
                 "Table function that fills missing (NULL/NaN) feature values with a per-column statistic. It "
                 "buffers the input relation `(SELECT ...)` (Arg(0)), fits a `SimpleImputer` once, and replaces "
@@ -427,9 +453,9 @@ class PcaFn(_BufferingTransform[ComponentsArgs]):
         name = "pca"
         description = "Principal component analysis (linear dimensionality reduction)"
         categories = ["decomposition", "dimensionality-reduction"]
-        examples = _ex("pca", "n_components => 2")
+        examples = _ex("pca", "n_components => 2", shape=_COMPONENTS)
         tags = {
-            "vgi.result_columns_md": _COMPONENTS_MD,
+            "vgi.result_dynamic_columns_md": _COMPONENTS_MD,
             "vgi.doc_llm": (
                 "Table function performing principal component analysis (PCA): a linear projection of the "
                 "numeric features onto the `n_components :=` orthogonal directions of greatest variance. It "
@@ -474,9 +500,9 @@ class TruncatedSvdFn(_BufferingTransform[ComponentsArgs]):
         name = "truncated_svd"
         description = "Truncated SVD (LSA) dimensionality reduction"
         categories = ["decomposition", "dimensionality-reduction"]
-        examples = _ex("truncated_svd", "n_components => 2")
+        examples = _ex("truncated_svd", "n_components => 2", shape=_COMPONENTS)
         tags = {
-            "vgi.result_columns_md": _COMPONENTS_MD,
+            "vgi.result_dynamic_columns_md": _COMPONENTS_MD,
             "vgi.doc_llm": (
                 "Table function performing truncated singular value decomposition (LSA): a linear "
                 "dimensionality reduction to `n_components :=` factors that, unlike PCA, does NOT center the "
@@ -547,9 +573,9 @@ class KMeansFn(_BufferingTransform[KMeansArgs]):
         name = "kmeans"
         description = "K-Means clustering; emits a cluster label per row"
         categories = ["clustering"]
-        examples = _ex("kmeans", "n_clusters => 3")
+        examples = _ex("kmeans", "n_clusters => 3", shape=_CLUSTERS)
         tags = {
-            "vgi.result_columns_md": _CLUSTER_MD,
+            "vgi.result_dynamic_columns_md": _CLUSTER_MD,
             "vgi.doc_llm": (
                 "Table function that runs K-Means clustering and labels every input row with its cluster. It "
                 "buffers the numeric feature relation `(SELECT ...)` (Arg(0)), partitions the rows into "
@@ -601,9 +627,9 @@ class DbscanFn(_BufferingTransform[DbscanArgs]):
         name = "dbscan"
         description = "DBSCAN density clustering; emits a cluster label per row (-1 = noise)"
         categories = ["clustering"]
-        examples = _ex("dbscan", "eps => 0.5")
+        examples = _ex("dbscan", "eps => 0.5", shape=_CLUSTERS)
         tags = {
-            "vgi.result_columns_md": _CLUSTER_MD,
+            "vgi.result_dynamic_columns_md": _CLUSTER_MD,
             "vgi.doc_llm": (
                 "Table function that runs DBSCAN density-based clustering. It buffers the numeric feature "
                 "relation `(SELECT ...)` (Arg(0)) and groups rows that are densely packed: a point is a core "
@@ -653,7 +679,9 @@ def _outlier_fields(_feature_names: list[str], _args: Any) -> list[pa.Field]:
 class IsolationForestArgs(_BaseArgs):
     """Arguments for the isolation_forest function."""
 
-    contamination: Annotated[float, Arg("contamination", default=0.1, doc="Expected proportion of outliers (0-0.5).")]
+    contamination: Annotated[
+        float, Arg("contamination", default=0.1, doc="Expected proportion of outliers.", gt=0.0, le=0.5)
+    ]
     random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
 
 
@@ -668,9 +696,9 @@ class IsolationForestFn(_BufferingTransform[IsolationForestArgs]):
         name = "isolation_forest"
         description = "Isolation Forest outlier detection; emits an anomaly score and flag per row"
         categories = ["outlier-detection"]
-        examples = _ex("isolation_forest", "contamination => 0.1")
+        examples = _ex("isolation_forest", "contamination => 0.1", shape=_OUTLIERS)
         tags = {
-            "vgi.result_columns_md": _OUTLIER_MD,
+            "vgi.result_dynamic_columns_md": _OUTLIER_MD,
             "vgi.doc_llm": (
                 "Table function that runs Isolation Forest outlier detection. It buffers the numeric feature "
                 "relation `(SELECT ...)` (Arg(0)), fits an ensemble of random trees that isolate points by "
@@ -729,7 +757,7 @@ class MaxAbsScalerFn(_BufferingTransform[_BaseArgs]):
         categories = ["preprocessing", "scaling"]
         examples = _ex("maxabs_scaler")
         tags = {
-            "vgi.result_columns_md": _scaler_md("DOUBLE", "the scaled value."),
+            "vgi.result_dynamic_columns_md": _scaler_md("DOUBLE", "the scaled value."),
             "vgi.doc_llm": (
                 "Table function that scales each numeric feature by its maximum absolute value, mapping it "
                 "into `[-1, 1]` without shifting (zeros stay zero, so sparsity is preserved). It buffers the "
@@ -780,7 +808,7 @@ class PowerTransformerFn(_BufferingTransform[PowerTransformerArgs]):
         categories = ["preprocessing", "scaling"]
         examples = _ex("power_transformer", "method => 'yeo-johnson'")
         tags = {
-            "vgi.result_columns_md": _scaler_md("DOUBLE", "the transformed value."),
+            "vgi.result_dynamic_columns_md": _scaler_md("DOUBLE", "the transformed value."),
             "vgi.doc_llm": (
                 "Table function that applies a monotone power transform to make each numeric feature more "
                 "Gaussian (stabilizing variance and reducing skew). It buffers the input relation "
@@ -834,7 +862,7 @@ class QuantileTransformerFn(_BufferingTransform[QuantileTransformerArgs]):
         categories = ["preprocessing", "scaling"]
         examples = _ex("quantile_transformer", "output_distribution => 'normal'")
         tags = {
-            "vgi.result_columns_md": _scaler_md("DOUBLE", "the transformed value."),
+            "vgi.result_dynamic_columns_md": _scaler_md("DOUBLE", "the transformed value."),
             "vgi.doc_llm": (
                 "Table function that maps each numeric feature onto a target distribution using its rank/"
                 "quantiles — a nonparametric transform that forces every feature to the same shape and "
@@ -890,7 +918,7 @@ class BinarizerFn(_BufferingTransform[BinarizerArgs]):
         categories = ["preprocessing"]
         examples = _ex("binarizer", "threshold => 0.0")
         tags = {
-            "vgi.result_columns_md": _scaler_md("DOUBLE", "the 0/1 thresholded value."),
+            "vgi.result_dynamic_columns_md": _scaler_md("DOUBLE", "the 0/1 thresholded value."),
             "vgi.doc_llm": (
                 "Table function that binarizes each numeric feature against a fixed cutoff: values strictly "
                 "greater than `threshold :=` (default 0.0) become 1.0, all others 0.0. It buffers the input "
@@ -926,7 +954,10 @@ class KBinsDiscretizerArgs(_BaseArgs):
     """Arguments for the k_bins_discretizer function."""
 
     n_bins: Annotated[int, Arg("n_bins", default=5, doc="Number of bins per feature.")]
-    strategy: Annotated[str, Arg("strategy", default="quantile", doc="'uniform', 'quantile', or 'kmeans'.")]
+    strategy: Annotated[
+        str,
+        Arg("strategy", default="quantile", doc="How bin edges are placed.", choices=("uniform", "quantile", "kmeans")),
+    ]
 
 
 def _bin_fields(feature_names: list[str], _args: Any) -> list[pa.Field]:
@@ -946,7 +977,7 @@ class KBinsDiscretizerFn(_BufferingTransform[KBinsDiscretizerArgs]):
         categories = ["preprocessing", "encoding"]
         examples = _ex("kbins_discretizer", "n_bins => 5")
         tags = {
-            "vgi.result_columns_md": _scaler_md("BIGINT", "the bin index."),
+            "vgi.result_dynamic_columns_md": _scaler_md("BIGINT", "the bin index."),
             "vgi.doc_llm": (
                 "Table function that discretizes continuous features into integer bins (ordinal encoding). "
                 "It buffers the input relation `(SELECT ...)` (Arg(0)), fits a `KBinsDiscretizer` per "
@@ -988,7 +1019,15 @@ class AgglomerativeArgs(_BaseArgs):
     """Arguments for the agglomerative function."""
 
     n_clusters: Annotated[int, Arg("n_clusters", default=2, doc="Number of clusters.")]
-    linkage: Annotated[str, Arg("linkage", default="ward", doc="Linkage: ward, complete, average, single.")]
+    linkage: Annotated[
+        str,
+        Arg(
+            "linkage",
+            default="ward",
+            doc="Cluster linkage criterion.",
+            choices=("ward", "complete", "average", "single"),
+        ),
+    ]
 
 
 class AgglomerativeFn(_BufferingTransform[AgglomerativeArgs]):
@@ -1002,9 +1041,9 @@ class AgglomerativeFn(_BufferingTransform[AgglomerativeArgs]):
         name = "agglomerative_clustering"
         description = "Hierarchical (agglomerative) clustering; emits a cluster label per row"
         categories = ["clustering"]
-        examples = _ex("agglomerative_clustering", "n_clusters => 3")
+        examples = _ex("agglomerative_clustering", "n_clusters => 3", shape=_CLUSTERS)
         tags = {
-            "vgi.result_columns_md": _CLUSTER_MD,
+            "vgi.result_dynamic_columns_md": _CLUSTER_MD,
             "vgi.doc_llm": (
                 "Table function that runs hierarchical (agglomerative) clustering: it buffers the numeric "
                 "feature relation `(SELECT ...)` (Arg(0)) and repeatedly merges the two closest groups "
@@ -1057,9 +1096,9 @@ class SpectralClusteringFn(_BufferingTransform[SpectralClusteringArgs]):
         name = "spectral_clustering"
         description = "Spectral clustering on the affinity graph; emits a cluster label per row"
         categories = ["clustering"]
-        examples = _ex("spectral_clustering", "n_clusters => 3")
+        examples = _ex("spectral_clustering", "n_clusters => 3", shape=_CLUSTERS)
         tags = {
-            "vgi.result_columns_md": _CLUSTER_MD,
+            "vgi.result_dynamic_columns_md": _CLUSTER_MD,
             "vgi.doc_llm": (
                 "Table function that runs spectral clustering: it buffers the numeric feature relation "
                 "`(SELECT ...)` (Arg(0)), builds an affinity graph between rows, embeds them with the "
@@ -1110,9 +1149,9 @@ class MeanShiftFn(_BufferingTransform[MeanShiftArgs]):
         name = "mean_shift"
         description = "Mean-shift clustering (auto-discovers the number of clusters)"
         categories = ["clustering"]
-        examples = _ex("mean_shift")
+        examples = _ex("mean_shift", shape=_CLUSTERS)
         tags = {
-            "vgi.result_columns_md": _CLUSTER_MD,
+            "vgi.result_dynamic_columns_md": _CLUSTER_MD,
             "vgi.doc_llm": (
                 "Table function that runs mean-shift clustering, which discovers the number of clusters "
                 "automatically by shifting each point toward the local density mode within a kernel window. "
@@ -1164,9 +1203,9 @@ class BirchFn(_BufferingTransform[BirchArgs]):
         name = "birch"
         description = "BIRCH clustering (memory-efficient for large datasets)"
         categories = ["clustering"]
-        examples = _ex("birch", "n_clusters => 3")
+        examples = _ex("birch", "n_clusters => 3", shape=_CLUSTERS)
         tags = {
-            "vgi.result_columns_md": _CLUSTER_MD,
+            "vgi.result_dynamic_columns_md": _CLUSTER_MD,
             "vgi.doc_llm": (
                 "Table function that runs BIRCH clustering, a memory-efficient method for large datasets "
                 "that incrementally summarizes rows into a tree of compact subclusters before a final "
@@ -1218,9 +1257,9 @@ class OpticsFn(_BufferingTransform[OpticsArgs]):
         name = "optics"
         description = "OPTICS density clustering; emits a cluster label per row (-1 = noise)"
         categories = ["clustering"]
-        examples = _ex("optics", "min_samples => 5")
+        examples = _ex("optics", "min_samples => 5", shape=_CLUSTERS)
         tags = {
-            "vgi.result_columns_md": _CLUSTER_MD,
+            "vgi.result_dynamic_columns_md": _CLUSTER_MD,
             "vgi.doc_llm": (
                 "Table function that runs OPTICS density clustering, a generalization of DBSCAN that orders "
                 "points by reachability and so handles clusters of *varying* density without a single fixed "
@@ -1264,9 +1303,9 @@ class MiniBatchKMeansFn(_BufferingTransform[KMeansArgs]):
         name = "minibatch_kmeans"
         description = "Mini-batch K-Means clustering (faster on large datasets)"
         categories = ["clustering"]
-        examples = _ex("minibatch_kmeans", "n_clusters => 3")
+        examples = _ex("minibatch_kmeans", "n_clusters => 3", shape=_CLUSTERS)
         tags = {
-            "vgi.result_columns_md": _CLUSTER_MD,
+            "vgi.result_dynamic_columns_md": _CLUSTER_MD,
             "vgi.doc_llm": (
                 "Table function that runs mini-batch K-Means: the same centroid-distance clustering as "
                 "`kmeans` but fitted on small random mini-batches, trading a little cluster quality for much "
@@ -1305,7 +1344,15 @@ class GaussianMixtureArgs(_BaseArgs):
     """Arguments for the gaussian_mixture function."""
 
     n_components: Annotated[int, Arg("n_components", default=2, doc="Number of mixture components (clusters).")]
-    covariance_type: Annotated[str, Arg("covariance_type", default="full", doc="full, tied, diag, or spherical.")]
+    covariance_type: Annotated[
+        str,
+        Arg(
+            "covariance_type",
+            default="full",
+            doc="Shape of each component's covariance matrix.",
+            choices=("full", "tied", "diag", "spherical"),
+        ),
+    ]
     random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
 
 
@@ -1320,9 +1367,9 @@ class GaussianMixtureFn(_BufferingTransform[GaussianMixtureArgs]):
         name = "gaussian_mixture"
         description = "Gaussian mixture model clustering; emits the most likely component per row"
         categories = ["clustering"]
-        examples = _ex("gaussian_mixture", "n_components => 3")
+        examples = _ex("gaussian_mixture", "n_components => 3", shape=_CLUSTERS)
         tags = {
-            "vgi.result_columns_md": _CLUSTER_MD,
+            "vgi.result_dynamic_columns_md": _CLUSTER_MD,
             "vgi.doc_llm": (
                 "Table function that fits a Gaussian Mixture Model (soft, probabilistic clustering): it "
                 "models the data as a mix of `n_components :=` Gaussian blobs (default 2) and assigns each "
@@ -1368,7 +1415,9 @@ class LofArgs(_BaseArgs):
     """Arguments for the lof function."""
 
     n_neighbors: Annotated[int, Arg("n_neighbors", default=20, doc="Number of neighbours to use.")]
-    contamination: Annotated[float, Arg("contamination", default=0.1, doc="Expected proportion of outliers (0-0.5).")]
+    contamination: Annotated[
+        float, Arg("contamination", default=0.1, doc="Expected proportion of outliers.", gt=0.0, le=0.5)
+    ]
 
 
 class LocalOutlierFactorFn(_BufferingTransform[LofArgs]):
@@ -1382,9 +1431,9 @@ class LocalOutlierFactorFn(_BufferingTransform[LofArgs]):
         name = "local_outlier_factor"
         description = "Local Outlier Factor; emits an anomaly score and flag per row"
         categories = ["outlier-detection"]
-        examples = _ex("local_outlier_factor", "n_neighbors => 20")
+        examples = _ex("local_outlier_factor", "n_neighbors => 20", shape=_OUTLIERS)
         tags = {
-            "vgi.result_columns_md": _OUTLIER_MD,
+            "vgi.result_dynamic_columns_md": _OUTLIER_MD,
             "vgi.doc_llm": (
                 "Table function that runs Local Outlier Factor (LOF) detection: it scores each row by how "
                 "much sparser its local neighbourhood is than its neighbours', so it flags points that are "
@@ -1429,8 +1478,10 @@ class LocalOutlierFactorFn(_BufferingTransform[LofArgs]):
 class OneClassSvmArgs(_BaseArgs):
     """Arguments for the one_class_svm function."""
 
-    nu: Annotated[float, Arg("nu", default=0.5, doc="Upper bound on the fraction of outliers (0-1).")]
-    kernel: Annotated[str, Arg("kernel", default="rbf", doc="Kernel: rbf, linear, poly, sigmoid.")]
+    nu: Annotated[float, Arg("nu", default=0.5, doc="Upper bound on the fraction of outliers.", gt=0.0, le=1.0)]
+    kernel: Annotated[
+        str, Arg("kernel", default="rbf", doc="Kernel function.", choices=("rbf", "linear", "poly", "sigmoid"))
+    ]
     gamma: Annotated[str, Arg("gamma", default="scale", doc="Kernel coefficient ('scale' or 'auto').")]
 
 
@@ -1445,9 +1496,9 @@ class OneClassSvmFn(_BufferingTransform[OneClassSvmArgs]):
         name = "one_class_svm"
         description = "One-Class SVM novelty/outlier detection; emits an anomaly score and flag per row"
         categories = ["outlier-detection"]
-        examples = _ex("one_class_svm", "nu => 0.1")
+        examples = _ex("one_class_svm", "nu => 0.1", shape=_OUTLIERS)
         tags = {
-            "vgi.result_columns_md": _OUTLIER_MD,
+            "vgi.result_dynamic_columns_md": _OUTLIER_MD,
             "vgi.doc_llm": (
                 "Table function that runs One-Class SVM novelty/outlier detection: it learns a (kernelized) "
                 "boundary enclosing the bulk of the data and flags points falling outside it. It buffers the "
@@ -1491,7 +1542,9 @@ class OneClassSvmFn(_BufferingTransform[OneClassSvmArgs]):
 class EllipticEnvelopeArgs(_BaseArgs):
     """Arguments for the elliptic_envelope function."""
 
-    contamination: Annotated[float, Arg("contamination", default=0.1, doc="Expected proportion of outliers (0-0.5).")]
+    contamination: Annotated[
+        float, Arg("contamination", default=0.1, doc="Expected proportion of outliers.", gt=0.0, le=0.5)
+    ]
     random_state: Annotated[int, Arg("random_state", default=0, doc="Random seed.")]
 
 
@@ -1506,9 +1559,9 @@ class EllipticEnvelopeFn(_BufferingTransform[EllipticEnvelopeArgs]):
         name = "elliptic_envelope"
         description = "Elliptic Envelope (Gaussian) outlier detection; emits an anomaly score and flag per row"
         categories = ["outlier-detection"]
-        examples = _ex("elliptic_envelope", "contamination => 0.1")
+        examples = _ex("elliptic_envelope", "contamination => 0.1", shape=_OUTLIERS)
         tags = {
-            "vgi.result_columns_md": _OUTLIER_MD,
+            "vgi.result_dynamic_columns_md": _OUTLIER_MD,
             "vgi.doc_llm": (
                 "Table function that runs Elliptic Envelope outlier detection: it assumes the inliers are "
                 "Gaussian, robustly fits their mean and covariance, and flags rows lying far outside the "
@@ -1573,7 +1626,7 @@ class TsneFn(_BufferingTransform[TsneArgs]):
         name = "tsne"
         description = "t-SNE non-linear embedding (great for 2-D visualization)"
         categories = ["manifold", "dimensionality-reduction"]
-        examples = _ex("tsne", "n_components => 2")
+        examples = _ex("tsne", "n_components => 2", shape=_COMPONENTS)
         tags = {
             "vgi.doc_llm": (
                 "Table function computing a t-SNE non-linear embedding: it buffers the numeric feature "
@@ -1596,7 +1649,7 @@ class TsneFn(_BufferingTransform[TsneArgs]):
                 "- Visualization only: global distances are not meaningful, no out-of-sample transform, "
                 "and slow on large data — use `pca`/`umap`-style methods for reusable reduction"
             ),
-            "vgi.result_columns_md": _COMPONENTS_MD,
+            "vgi.result_dynamic_columns_md": _COMPONENTS_MD,
         }
 
     output_fields = staticmethod(_component_fields)
@@ -1629,7 +1682,7 @@ class IsomapFn(_BufferingTransform[IsomapArgs]):
         name = "isomap"
         description = "Isomap non-linear embedding (geodesic distance preservation)"
         categories = ["manifold", "dimensionality-reduction"]
-        examples = _ex("isomap", "n_components => 2")
+        examples = _ex("isomap", "n_components => 2", shape=_COMPONENTS)
         tags = {
             "vgi.doc_llm": (
                 "Table function computing an Isomap non-linear embedding: it buffers the numeric feature "
@@ -1651,7 +1704,7 @@ class IsomapFn(_BufferingTransform[IsomapArgs]):
                 "- Unrolls curved manifolds where straight-line distance lies; preserves global structure "
                 "better than t-SNE but needs a connected graph and good `n_neighbors`"
             ),
-            "vgi.result_columns_md": _COMPONENTS_MD,
+            "vgi.result_dynamic_columns_md": _COMPONENTS_MD,
         }
 
     output_fields = staticmethod(_component_fields)
@@ -1684,7 +1737,7 @@ class SpectralEmbeddingFn(_BufferingTransform[SpectralEmbeddingArgs]):
         name = "spectral_embedding"
         description = "Spectral (Laplacian eigenmaps) non-linear embedding"
         categories = ["manifold", "dimensionality-reduction"]
-        examples = _ex("spectral_embedding", "n_components => 2")
+        examples = _ex("spectral_embedding", "n_components => 2", shape=_COMPONENTS)
         tags = {
             "vgi.doc_llm": (
                 "Table function computing a spectral (Laplacian eigenmaps) embedding: it buffers the numeric "
@@ -1706,7 +1759,7 @@ class SpectralEmbeddingFn(_BufferingTransform[SpectralEmbeddingArgs]):
                 "- The embedding counterpart of `spectral_clustering`; preserves local manifold structure "
                 "but is O(n^2) — best on small/medium tables"
             ),
-            "vgi.result_columns_md": _COMPONENTS_MD,
+            "vgi.result_dynamic_columns_md": _COMPONENTS_MD,
         }
 
     output_fields = staticmethod(_component_fields)
@@ -1739,7 +1792,7 @@ class MdsFn(_BufferingTransform[MdsArgs]):
         name = "mds"
         description = "Multidimensional scaling embedding (distance preservation)"
         categories = ["manifold", "dimensionality-reduction"]
-        examples = _ex("mds", "n_components => 2")
+        examples = _ex("mds", "n_components => 2", shape=_COMPONENTS)
         tags = {
             "vgi.doc_llm": (
                 "Table function computing a multidimensional scaling (MDS) embedding: it buffers the numeric "
@@ -1761,7 +1814,7 @@ class MdsFn(_BufferingTransform[MdsArgs]):
                 "- Prioritizes global distance fidelity (vs. t-SNE's local focus); O(n^2) per iteration "
                 "and no transform for new rows — best on small/medium tables"
             ),
-            "vgi.result_columns_md": _COMPONENTS_MD,
+            "vgi.result_dynamic_columns_md": _COMPONENTS_MD,
         }
 
     output_fields = staticmethod(_component_fields)
@@ -1856,14 +1909,14 @@ class OrdinalEncoderFn(_EncoderBase[_BaseArgs]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.preprocessing.ordinal_encoder("
+                    "SELECT sample_id, target_name AS species_code FROM sklearn.preprocessing.ordinal_encoder("
                     "(SELECT sample_id, target_name FROM sklearn.datasets.iris()), id => 'sample_id')"
                 ),
                 description="Encode the iris species name as an integer code",
             )
         ]
         tags = {
-            "vgi.result_columns_md": _scaler_md("BIGINT", "the integer code (-1 = missing/unseen)."),
+            "vgi.result_dynamic_columns_md": _scaler_md("BIGINT", "the integer code (-1 = missing/unseen)."),
             "vgi.doc_llm": (
                 "Table function that ordinal-encodes categorical *string* columns: each distinct category in "
                 "a feature is mapped to an integer code, one fixed-width `BIGINT` column per input feature. "
@@ -1925,14 +1978,14 @@ class OneHotEncoderFn(_EncoderBase[_BaseArgs]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.preprocessing.one_hot_encoder("
-                    "(SELECT sample_id, target_name FROM sklearn.datasets.iris()), id => 'sample_id')"
+                    "SELECT category, count(*) AS n FROM sklearn.preprocessing.one_hot_encoder("
+                    "(SELECT sample_id, target_name FROM sklearn.datasets.iris()), id => 'sample_id') GROUP BY category"
                 ),
                 description="One-hot encode the iris species name (one row per active category)",
             )
         ]
         tags = {
-            "vgi.result_columns_md": columns_md_rows(
+            "vgi.result_dynamic_columns_md": dynamic_columns_md(
                 [
                     ("feature", "VARCHAR", "Source feature column."),
                     ("category", "VARCHAR", "Category value that is set for this row."),
@@ -2032,15 +2085,15 @@ class TargetEncoderFn(_EncoderBase[TargetEncoderArgs]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.preprocessing.target_encoder("
-                    "(SELECT sample_id, target_name, target FROM sklearn.datasets.iris()), "
-                    "id := 'sample_id', target := 'target')"
+                    "SELECT sample_id, target_name AS setosa_rate FROM sklearn.preprocessing.target_encoder("
+                    "(SELECT sample_id, target_name, (target = 0)::INTEGER AS is_setosa FROM sklearn.datasets.iris()), "
+                    "id := 'sample_id', target := 'is_setosa')"
                 ),
-                description="Encode the species name by its mean target",
+                description="Encode the species name by its rate of a binary is-setosa target",
             )
         ]
         tags = {
-            "vgi.result_columns_md": _scaler_md("DOUBLE", "the target-mean encoding."),
+            "vgi.result_dynamic_columns_md": _scaler_md("DOUBLE", "the target-mean encoding."),
             "vgi.doc_llm": (
                 "Table function that target-encodes categorical *string* columns: each category is replaced "
                 "by the mean of the `target :=` column for that category, computed with internal "
@@ -2150,14 +2203,22 @@ class PolynomialFeaturesFn(_BufferingTransform[PolynomialFeaturesArgs]):
         name = "polynomial_features"
         description = "Expand features into polynomial and interaction terms (e.g. a, b -> a, b, a^2, a*b, b^2)"
         categories = ["preprocessing", "feature-engineering"]
-        examples = _ex("polynomial_features", "degree => 2")
+        examples = _ex(
+            "polynomial_features",
+            "degree => 2",
+            shape=("sample_id, sepal_length_cm_pow2, sepal_length_cm_x_sepal_width_cm", ""),
+        )
         tags = {
-            "vgi.result_columns_md": columns_md_rows(
-                [],
-                note=(
-                    "One DOUBLE column per generated polynomial/interaction term; names are derived "
-                    "from the input features (e.g. `a`, `b`, `a_pow2`, `a_x_b`). " + _ID_NOTE
-                ),
+            "vgi.result_dynamic_columns_md": dynamic_columns_md(
+                [
+                    (
+                        "<term>",
+                        "DOUBLE",
+                        "One column per generated polynomial/interaction term, named from the input features "
+                        "(e.g. `a`, `b`, `a_pow2`, `a_x_b`).",
+                    )
+                ],
+                note=_ID_NOTE,
             ),
             "vgi.doc_llm": (
                 "Table function that expands numeric features into polynomial and interaction terms up to "

@@ -24,6 +24,7 @@ from vgi.catalog import Catalog, ReadOnlyCatalogInterface, Schema, Table, constr
 from vgi.catalog.catalog_interface import CatalogAttachResult, CatalogInfo
 
 from vgi_sklearn import __version__
+from vgi_sklearn.agent_tasks import AGENT_TEST_TASKS
 from vgi_sklearn.datasets import DATASET_FUNCTIONS
 from vgi_sklearn.feature_selection import FEATURE_SELECTION_FUNCTIONS
 from vgi_sklearn.grouped import GROUPED_FUNCTIONS
@@ -91,7 +92,7 @@ _CATALOG_COMMENT = "scikit-learn datasets, metrics, transforms, and a train/pred
 _CATALOG_DESCRIPTION_LLM = (
     "scikit-learn for SQL. Load toy and generated datasets; compute regression, "
     "classification, and clustering metrics as aggregates; fit and persist "
-    "transformers and models (fit returns a model BLOB, predict aligns features "
+    "transformers and models (fit returns a model `BLOB`, predict aligns features "
     "by name and auto-encodes string labels); run cross-validation, grid and "
     "randomized hyperparameter search, pipelines, and per-group modeling — all as "
     "DuckDB table, aggregate, and scalar functions."
@@ -165,7 +166,8 @@ _CATALOG_TAGS = {
     "vgi.license": "MIT",
     "vgi.support_contact": f"{SOURCE_URL}/issues",
     "vgi.support_policy_url": f"{SOURCE_URL}/blob/main/SUPPORT.md",
-    "vgi.title": "scikit-learn for SQL",
+    "vgi.title": "scikit-learn",
+    "vgi.subtitle": "Train, evaluate, and apply scikit-learn models, transforms, and metrics directly from SQL.",
     "vgi.keywords": json.dumps(
         [
             "scikit-learn",
@@ -182,6 +184,7 @@ _CATALOG_TAGS = {
         ]
     ),
     "vgi.executable_examples": _CATALOG_EXECUTABLE_EXAMPLES,
+    "vgi.agent_test_tasks": json.dumps(AGENT_TEST_TASKS),
 }
 
 # Per-schema metadata. Each schema carries its own description/title/keywords and
@@ -192,18 +195,17 @@ _SCHEMA_META: dict[str, dict[str, str]] = {
         "title": "Datasets",
         "keywords": json.dumps(["datasets", "toy data", "generators", "sample data", "iris"]),
         "doc_llm": (
-            "Built-in datasets as table functions: toy datasets (`iris`, `wine`, `digits`, "
-            "`breast_cancer`, `diabetes`, `california_housing`) and synthetic generators "
-            "(`make_classification`, `make_regression`, `make_blobs`, `make_moons`, "
-            "`make_circles`). Each returns a tidy feature matrix plus a `target`/`cluster` "
-            "column, ready to feed `sklearn.models.fit`."
+            "Reference data for machine learning without leaving SQL: scikit-learn's classic toy "
+            "datasets for classification and regression, plus synthetic generators whose size, "
+            "noise, and class structure are set by arguments. Each returns a tidy feature matrix "
+            "with a `sample_id` and a `target`/`cluster` column, ready to feed `sklearn.models.fit`. "
+            "Reach for it to demo, test, or benchmark a model or pipeline."
         ),
         "doc_md": (
             "### Datasets\n\n"
             "Load reference data without leaving SQL:\n\n"
-            "- **Toy** — `iris`, `wine`, `digits`, `breast_cancer`, `diabetes`, `california_housing`\n"
-            "- **Generators** — `make_classification`, `make_regression`, `make_blobs`, "
-            "`make_moons`, `make_circles` (column count depends on the arguments)\n\n"
+            "- **Toy datasets** — small, well-known classification and regression benchmarks\n"
+            "- **Generators** — synthetic data whose shape is set by the arguments\n\n"
             "Every row carries a `sample_id` plus the named features and target."
         ),
         "example_queries": json.dumps(
@@ -251,7 +253,7 @@ _SCHEMA_META: dict[str, dict[str, str]] = {
             "one-hot encoders, decomposition (`pca`, `truncated_svd`), clustering, outlier "
             "detection, manifold learning, text vectorizers, and feature selection. "
             "`fit_transformer`/`apply_transform` persist a fitted transformer as a reusable "
-            "BLOB, mirroring the model registry."
+            "`BLOB`, mirroring the model registry."
         ),
         "doc_md": (
             "### Preprocessing\n\n"
@@ -260,7 +262,7 @@ _SCHEMA_META: dict[str, dict[str, str]] = {
             "- **Decompose / cluster / detect** — `pca`, `truncated_svd`, clustering, outlier detection\n"
             "- **Text & selection** — `count_vectorizer`, `tfidf_vectorizer`, `select_k_best`, "
             "`variance_threshold`\n"
-            "- **Stored** — `fit_transformer` → BLOB, replayed by `apply_transform`"
+            "- **Stored** — `fit_transformer` → `BLOB`, replayed by `apply_transform`"
         ),
         "example_queries": json.dumps(
             [
@@ -280,17 +282,16 @@ _SCHEMA_META: dict[str, dict[str, str]] = {
         "title": "Models",
         "keywords": json.dumps(["models", "fit", "predict", "cross-validation", "model registry"]),
         "doc_llm": (
-            "The core supervised workflow: `fit` returns a model BLOB (and optionally persists "
-            "it by `model_name`), `predict` aligns features by name and decodes labels, with "
-            "`cross_val_predict`/`cross_val_score`, `partial_dependence`, "
-            "`permutation_importance`, `fit_pipeline`, CV splitters, `grid_search`/"
-            "`randomized_search`, per-group `fit_model` + `predict_*`, and registry management "
-            "(`list_models`/`model_info`/`drop_model`). This is the default schema."
+            "The core supervised workflow: `fit` returns a model `BLOB` (and optionally persists "
+            "it by `model_name`) and `predict` scores new rows, aligning features by name and "
+            "decoding labels. Around that sit cross-validation and CV splitters, model inspection, "
+            "pipelines, hyperparameter search, per-group modeling, and a named model registry. "
+            "This is the default schema."
         ),
         "doc_md": (
             "### Models\n\n"
             "Train, evaluate, and serve models — the default schema:\n\n"
-            "- **fit → BLOB → predict**, features aligned by name, string labels auto-encoded\n"
+            "- **fit → `BLOB` → predict**, features aligned by name, string labels auto-encoded\n"
             "- **Validate** — `cross_val_predict`, `cross_val_score`, CV splitters\n"
             "- **Inspect** — `partial_dependence`, `permutation_importance`\n"
             "- **Search** — `grid_search`, `randomized_search`; **pipelines**; **per-group** modeling\n"
@@ -318,7 +319,7 @@ _SCHEMA_META: dict[str, dict[str, str]] = {
             "(random forests, gradient boosting, linear/logistic models, SVMs, kNN, MLPs, "
             "naive Bayes, ...), each exposing that estimator's hyperparameters as named, "
             "typed arguments instead of the generic `fit(estimator := ...)` JSON surface. "
-            "Returns the same model BLOB used by `sklearn.models.predict`."
+            "Returns the same model `BLOB` used by `sklearn.models.predict`."
         ),
         "doc_md": (
             "### Estimators\n\n"
@@ -326,7 +327,7 @@ _SCHEMA_META: dict[str, dict[str, str]] = {
             "- e.g. `fit_random_forest_classifier`, `fit_gradient_boosting_regressor`, "
             "`fit_logistic_regression`, `fit_svc`, `fit_mlp_classifier`\n"
             "- Hyperparameters are typed named args (no JSON blob)\n"
-            "- Output is a model BLOB — predict with `sklearn.models.predict`"
+            "- Output is a model `BLOB` — predict with `sklearn.models.predict`"
         ),
         "example_queries": json.dumps(
             [
@@ -341,6 +342,70 @@ _SCHEMA_META: dict[str, dict[str, str]] = {
         ),
     },
 }
+
+
+# Per-schema navigation categories (VGI413): ordered (name, description, keywords).
+# Each function is placed in the first category whose keywords intersect its Meta
+# ``categories``; an entry with no keywords is the schema's catch-all.
+_CATEGORIES: dict[str, list[tuple[str, str, frozenset[str]]]] = {
+    "datasets": [
+        ("Generators", "Synthetic datasets whose size and structure are set by arguments.", frozenset({"synthetic"})),
+        ("Toy datasets", "Small, classic classification and regression benchmarks.", frozenset()),
+    ],
+    "metrics": [
+        ("Clustering", "Scores for cluster assignments, with or without ground truth.", frozenset({"clustering"})),
+        ("Regression", "Error and fit scores for continuous predictions.", frozenset({"regression"})),
+        ("Classification", "Accuracy, precision/recall, ranking scores, curves, and matrices.", frozenset()),
+    ],
+    "preprocessing": [
+        (
+            "Stored transformers",
+            "Fit a transformer once, save it as a BLOB, and replay it on new data.",
+            frozenset({"registry"}),
+        ),
+        ("Clustering", "Assign each row a cluster label.", frozenset({"clustering"})),
+        ("Outlier detection", "Score rows for anomaly and flag outliers.", frozenset({"outlier-detection"})),
+        (
+            "Dimensionality reduction",
+            "Project features onto fewer components or a low-dimensional embedding.",
+            frozenset({"decomposition", "manifold"}),
+        ),
+        ("Feature selection", "Rank and select the most informative features.", frozenset({"feature-selection"})),
+        ("Text", "Turn documents into token-count or TF-IDF features.", frozenset({"text"})),
+        ("Scaling and encoding", "Scale, impute, encode, and expand feature columns.", frozenset()),
+    ],
+    "models": [
+        ("Model registry", "List, describe, and drop stored models.", frozenset({"registry"})),
+        ("Per-group models", "Fit and apply one model per group with aggregates.", frozenset({"grouped"})),
+        ("Hyperparameter search", "Cross-validated grid and randomized search.", frozenset({"tuning"})),
+        ("Inspection", "Explain a fitted model's dependence on its features.", frozenset({"inspection"})),
+        (
+            "Validation",
+            "Cross-validation scores, out-of-fold predictions, and CV splitters.",
+            frozenset({"model-selection", "evaluation"}),
+        ),
+        ("Training and prediction", "Fit models and pipelines, then score new rows.", frozenset()),
+    ],
+    "estimators": [
+        ("Regressors", "Typed fit functions for regression estimators.", frozenset({"regression"})),
+        ("Classifiers", "Typed fit functions for classification estimators.", frozenset()),
+    ],
+}
+
+
+def _category_for(schema: str, fn: type) -> str:
+    """Pick the navigation category for ``fn`` from its Meta ``categories``."""
+    cats = set(getattr(getattr(fn, "Meta", None), "categories", []) or [])
+    for name, _desc, keywords in _CATEGORIES[schema]:
+        if not keywords or keywords & cats:
+            return name
+    raise AssertionError(f"no category for {fn!r} in schema {schema!r}")  # pragma: no cover
+
+
+def _categories_registry(schema: str) -> str:
+    """The schema's ``vgi.categories`` JSON: categories in display order."""
+    used = {_category_for(schema, fn) for fn in _SCHEMA_FUNCTIONS[schema]}
+    return json.dumps([{"name": name, "description": desc} for name, desc, _kw in _CATEGORIES[schema] if name in used])
 
 
 def _humanize(name: str) -> str:
@@ -371,6 +436,9 @@ def _apply_discovery_tags(functions: list[type]) -> None:
 
 
 _apply_discovery_tags(_FUNCTIONS)
+for _schema_name, _schema_fns in _SCHEMA_FUNCTIONS.items():
+    for _fn in _schema_fns:
+        getattr(_fn, "Meta").tags["vgi.category"] = _category_for(_schema_name, _fn)  # noqa: B009 - dynamic Meta
 
 
 def _is_parameterless_table_fn(fn: type) -> bool:
@@ -398,7 +466,7 @@ _TABLE_META: dict[str, dict[str, Any]] = {
             "four numeric measurements in centimetres (`sepal_length_cm`, `sepal_width_cm`, "
             "`petal_length_cm`, `petal_width_cm`), an integer `target` (0/1/2), and the "
             "`target_name` species (setosa/versicolor/virginica). Query it directly — "
-            "`SELECT * FROM sklearn.datasets.iris` — for a balanced 3-class toy dataset."
+            "`sklearn.datasets.iris` — for a balanced 3-class toy dataset."
         ),
         "doc_md": (
             "### `iris` table\n\n"
@@ -637,6 +705,23 @@ def _function_table(schema: str, fn: type) -> Table:
         )
         for i, cols in enumerate(tm["primary_key"])
     )
+    # Columns the worker always populates (non-nullable output fields) are attested
+    # NOT NULL; like the key, that holds on every row the table can return.
+    fixed_schema = getattr(fn, "FIXED_SCHEMA", None)
+    if fixed_schema is not None:
+        constraints += tuple(
+            constraint_record(
+                [schema],
+                meta.name,
+                f"nn_{f.name}",
+                "NOT_NULL",
+                [[f.name]],
+                enforcement="ENFORCED",
+                validation="ALL_ROWS",
+            )
+            for f in fixed_schema
+            if not f.nullable
+        )
     return Table(
         name=meta.name,
         function=fn,
@@ -650,6 +735,7 @@ def _function_table(schema: str, fn: type) -> Table:
             "vgi.doc_llm": tm["doc_llm"],
             "vgi.doc_md": tm["doc_md"],
             "vgi.example_queries": tm["example_queries"],
+            "vgi.category": _category_for(schema, fn),
         },
     )
 
@@ -673,6 +759,7 @@ def _build_schema(name: str, functions: list[type]) -> Schema:
             "vgi.doc_llm": meta["doc_llm"],
             "vgi.doc_md": meta["doc_md"],
             "vgi.example_queries": meta["example_queries"],
+            "vgi.categories": _categories_registry(name),
         },
         tables=tables,
         functions=functions,

@@ -41,8 +41,8 @@ from .buffering import DrainState, SinkBuffer, input_schema_of
 from .features import PIPELINE_PARAM_PREFIX, prefix_grid, wrap_estimator
 from .models import _ESTIMATORS, CLASSIFICATION, _features_excluding, _xy
 from .registry import ModelMetadata, get_store, now_iso, pack_model, validate_name
-from .schema_utils import columns_md
 from .schema_utils import field as sfield
+from .schema_utils import result_columns_schema
 from .typed_models import _HP, _HPARAMS, _UNSET
 
 _PYTYPE_TO_ARROW: dict[type, pa.DataType] = {
@@ -129,7 +129,7 @@ class GridSearch(SinkBuffer[GridSearchArgs, DrainState]):
         description = "Cross-validated grid search over an estimator's hyperparameters"
         categories = ["models", "supervised", "tuning"]
         tags = {
-            "vgi.result_columns_md": columns_md(_SEARCH_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_SEARCH_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that runs scikit-learn `GridSearchCV` — an exhaustive cross-validated "
                 "sweep of every combination in a hyperparameter grid — over a buffered training relation "
@@ -141,14 +141,14 @@ class GridSearch(SinkBuffer[GridSearchArgs, DrainState]):
                 "Name the `target :=` label column (required), optionally an `id :=` to exclude, set `cv :=` "
                 "folds and an optional `scoring :=`. String features auto one-hot-encode. Output columns: "
                 "`estimator`, `params` (JSON of the combo), `mean_test_score`, `std_test_score`, `rank` "
-                "(1 = best), and `model` — the refit best estimator as a self-contained BLOB carried on the "
+                "(1 = best), and `model` — the refit best estimator as a self-contained `BLOB` carried on the "
                 "single `best_index_` row, so grab it with `WHERE model IS NOT NULL` (rank 1 can tie). Pass "
                 "`model_name :=` to also persist the best model to the registry. Cost is the full Cartesian "
                 "product of the grid times `cv` fits — use `randomized_search` to cap it."
             ),
             "vgi.doc_md": (
                 "**grid_search** — exhaustive cross-validated hyperparameter search; returns a leaderboard "
-                "plus the refit best model BLOB.\n\n"
+                "plus the refit best model `BLOB`.\n\n"
                 "Runs `GridSearchCV` over every combination in the grid and emits one row per combination, "
                 "ranked by mean CV score.\n\n"
                 "- Estimator + grid are one tagged-union arg: "
@@ -158,7 +158,7 @@ class GridSearch(SinkBuffer[GridSearchArgs, DrainState]):
                 "passthrough; `cv :=` folds; `scoring :=` scorer; `model_name :=` to persist the best model\n"
                 "- Output: `estimator`, `params` (JSON), `mean_test_score`, `std_test_score`, `rank` "
                 "(1 = best), and `model`\n"
-                "- The refit best model BLOB sits only on the best row — select it with "
+                "- The refit best model `BLOB` sits only on the best row — select it with "
                 "`WHERE model IS NOT NULL` (rank 1 can tie). Cost grows with the full grid size; prefer "
                 "`randomized_search` for large spaces"
             ),
@@ -333,7 +333,7 @@ class RandomizedSearch(SinkBuffer[RandomizedSearchArgs, DrainState]):
         description = "Cross-validated randomized search: sample n_iter hyperparameter combinations"
         categories = ["models", "supervised", "tuning"]
         tags = {
-            "vgi.result_columns_md": columns_md(_SEARCH_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_SEARCH_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that runs scikit-learn `RandomizedSearchCV` — it samples `n_iter :=` "
                 "random combinations from a hyperparameter grid (instead of the full Cartesian product) "
@@ -347,13 +347,13 @@ class RandomizedSearch(SinkBuffer[RandomizedSearchArgs, DrainState]):
                 "Name the `target :=` label column (required), optionally an `id :=` to exclude, set `cv :=` "
                 "folds and an optional `scoring :=`. String features auto one-hot-encode. Output columns: "
                 "`estimator`, `params` (JSON), `mean_test_score`, `std_test_score`, `rank` (1 = best), and "
-                "`model` — the refit best estimator as a self-contained BLOB on the single best row, found "
+                "`model` — the refit best estimator as a self-contained `BLOB` on the single best row, found "
                 "with `WHERE model IS NOT NULL` (rank 1 can tie). Pass `model_name :=` to also persist it. "
                 "Prefer this over `grid_search` when the grid is large and an exhaustive sweep is too costly."
             ),
             "vgi.doc_md": (
                 "**randomized_search** — sampled cross-validated hyperparameter search; returns a "
-                "leaderboard plus the refit best model BLOB.\n\n"
+                "leaderboard plus the refit best model `BLOB`.\n\n"
                 "Runs `RandomizedSearchCV`, drawing `n_iter` random combinations from the grid (capped at "
                 "the grid size) and ranking them by mean CV score — cheaper than an exhaustive "
                 "`grid_search` on large spaces.\n\n"
@@ -365,7 +365,7 @@ class RandomizedSearch(SinkBuffer[RandomizedSearchArgs, DrainState]):
                 "folds; `scoring :=` scorer; `model_name :=` to persist the best model\n"
                 "- Output: `estimator`, `params` (JSON), `mean_test_score`, `std_test_score`, `rank` "
                 "(1 = best), and `model`\n"
-                "- The refit best model BLOB sits only on the best row — select it with "
+                "- The refit best model `BLOB` sits only on the best row — select it with "
                 "`WHERE model IS NOT NULL` (rank 1 can tie)"
             ),
         }

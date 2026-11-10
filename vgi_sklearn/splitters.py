@@ -28,7 +28,7 @@ from vgi.table_function import BindParams
 from vgi_rpc.rpc import OutputCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of
-from .schema_utils import columns_md_rows
+from .schema_utils import dynamic_columns_md
 from .schema_utils import field as sfield
 
 
@@ -41,11 +41,10 @@ class _HasId(Protocol):
         ...
 
 
-_FOLD_MD = columns_md_rows(
-    [
-        ("<id>", "(input id type)", "The id column, carried through from the input."),
-        ("fold", "BIGINT", "Test fold this row belongs to."),
-    ]
+_ID_FIRST_NOTE = "The `id :=` column comes first, carried through from the input with its original name and type."
+_FOLD_MD = dynamic_columns_md(
+    [("fold", "BIGINT", "Test fold this row belongs to.")],
+    note=_ID_FIRST_NOTE,
 )
 
 
@@ -138,7 +137,7 @@ class KFold(_FoldFunction[KFoldArgs]):
         description = "Assign each row a K-fold test fold (id, fold)"
         categories = ["model-selection", "evaluation"]
         tags = {
-            "vgi.result_columns_md": _FOLD_MD,
+            "vgi.result_dynamic_columns_md": _FOLD_MD,
             "vgi.doc_llm": (
                 "Table function that assigns each input row a K-fold test fold so you can run cross-validation "
                 "in pure SQL. It buffers the input relation `(SELECT ...)` (Arg(0)) — only the required `id :=` "
@@ -153,7 +152,7 @@ class KFold(_FoldFunction[KFoldArgs]):
                 "- Input: `(SELECT ...)` table; `id :=` column to carry through (**required**)\n"
                 "- `n_splits :=` folds (default 5); `shuffle :=` randomize (default false) with "
                 "`random_state :=`\n"
-                "- Output: one `(id, fold)` row per input row — `fold` BIGINT is the row's **test** fold\n"
+                "- Output: one `(id, fold)` row per input row — `fold` `BIGINT` is the row's **test** fold\n"
                 "- Join back on `id`, then train on `fold <> f` / test on `fold = f`; the plain "
                 "(non-stratified, non-grouped) splitter"
             ),
@@ -161,10 +160,11 @@ class KFold(_FoldFunction[KFoldArgs]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.models.kfold((SELECT sample_id FROM sklearn.datasets.iris()), "
-                    "id := 'sample_id', n_splits := 5)"
+                    "SELECT fold, count(*) AS n_rows FROM sklearn.models.kfold((SELECT "
+                    "sample_id FROM sklearn.datasets.iris()), "
+                    "id := 'sample_id', n_splits := 5) GROUP BY fold"
                 ),
-                description="5-fold assignment for iris rows",
+                description="Rows per fold in a 5-fold split of iris",
             )
         ]
 
@@ -202,7 +202,7 @@ class StratifiedKFold(_FoldFunction[StratifiedKFoldArgs]):
         description = "K-fold that preserves each class's proportion per fold (id, fold)"
         categories = ["model-selection", "evaluation"]
         tags = {
-            "vgi.result_columns_md": _FOLD_MD,
+            "vgi.result_dynamic_columns_md": _FOLD_MD,
             "vgi.doc_llm": (
                 "Table function like `kfold` but stratified: each fold preserves the class proportions of the "
                 "whole dataset. It buffers the input relation `(SELECT ...)` (Arg(0)), reads the required "
@@ -225,7 +225,7 @@ class StratifiedKFold(_FoldFunction[StratifiedKFoldArgs]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.models.stratified_kfold((SELECT sample_id, target FROM sklearn.datasets.iris()), "  # noqa: E501
+                    "SELECT sample_id, fold FROM sklearn.models.stratified_kfold((SELECT sample_id, target FROM sklearn.datasets.iris()), "  # noqa: E501
                     "id := 'sample_id', label := 'target', n_splits := 5)"
                 ),
                 description="Class-balanced 5-fold for iris",
@@ -281,7 +281,7 @@ class GroupKFold(_FoldFunction[GroupKFoldArgs]):
         description = "K-fold that keeps all rows of a group in the same fold (id, fold)"
         categories = ["model-selection", "evaluation"]
         tags = {
-            "vgi.result_columns_md": _FOLD_MD,
+            "vgi.result_dynamic_columns_md": _FOLD_MD,
             "vgi.doc_llm": (
                 "Table function like `kfold` but group-aware: all rows sharing a group value are kept "
                 "together in the same fold, so no group is split across train and test (preventing leakage "
@@ -304,7 +304,7 @@ class GroupKFold(_FoldFunction[GroupKFoldArgs]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.models.group_kfold((SELECT sample_id, target AS grp FROM sklearn.datasets.iris()), "  # noqa: E501
+                    "SELECT sample_id, fold FROM sklearn.models.group_kfold((SELECT sample_id, target AS grp FROM sklearn.datasets.iris()), "  # noqa: E501
                     "id := 'sample_id', group_col := 'grp', n_splits := 3)"
                 ),
                 description="Group-aware 3-fold (no group spans folds)",
@@ -353,12 +353,13 @@ class TimeSeriesSplit(SinkBuffer[TimeSeriesSplitArgs, DrainState]):
         description = "Expanding-window splits for ordered data: (split, id, role) in {train, test}"
         categories = ["model-selection", "evaluation"]
         tags = {
-            "vgi.result_columns_md": columns_md_rows(
+            "vgi.result_dynamic_columns_md": dynamic_columns_md(
                 [
                     ("split", "BIGINT", "Split index (0-based)."),
-                    ("<id>", "(input id type)", "The id column, carried through from the input."),
                     ("role", "VARCHAR", "'train' or 'test' for this row in this split."),
-                ]
+                ],
+                note="The `id :=` column sits between `split` and `role`, carried through with its original "
+                "name and type.",
             ),
             "vgi.doc_llm": (
                 "Table function producing forward-chaining (expanding-window) train/test splits for "
@@ -374,7 +375,7 @@ class TimeSeriesSplit(SinkBuffer[TimeSeriesSplitArgs, DrainState]):
                 "**timeseries_split** — expanding-window train/test splits for ordered data.\n\n"
                 "- Input: `(SELECT ... ORDER BY ...)` in time order; `id :=` passthrough (**required**)\n"
                 "- `n_splits :=` number of expanding-window splits (default 5)\n"
-                "- Output (long): `split` BIGINT, `<id>`, `role` VARCHAR in `{'train','test'}` — one row per "
+                "- Output (long): `split` `BIGINT`, `<id>`, `role` `VARCHAR` in `{'train','test'}` — one row per "
                 "(row, split) membership\n"
                 "- Each split trains on all earlier rows and tests on the next block (no future leakage); "
                 "rows recur across splits, hence the long shape rather than one fold per row"
@@ -383,8 +384,8 @@ class TimeSeriesSplit(SinkBuffer[TimeSeriesSplitArgs, DrainState]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.models.timeseries_split((SELECT sample_id FROM sklearn.datasets.iris() ORDER BY sample_id), "  # noqa: E501
-                    "id := 'sample_id', n_splits := 5)"
+                    "SELECT split, role, count(*) AS n_rows FROM sklearn.models.timeseries_split((SELECT sample_id FROM sklearn.datasets.iris() ORDER BY sample_id), "  # noqa: E501
+                    "id := 'sample_id', n_splits := 5) GROUP BY split, role ORDER BY split, role"
                 ),
                 description="Forward-chaining train/test splits over ordered rows",
             )

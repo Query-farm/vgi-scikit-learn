@@ -30,7 +30,7 @@ from vgi.table_function import BindParams
 from vgi_rpc.rpc import OutputCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of
-from .schema_utils import columns_md_rows
+from .schema_utils import dynamic_columns_md
 from .schema_utils import field as sfield
 
 _VECTORIZER_ID_NOTE = "If an `id` column is named, it is carried through as the first column on each row."
@@ -183,13 +183,16 @@ class CountVectorizerFn(_Vectorizer):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.preprocessing.count_vectorizer((SELECT * FROM (VALUES (1, 'the cat sat on the mat'), (2, 'a quick brown dog')) AS docs(id, body)), id := 'id', text := 'body')"  # noqa: E501
+                    "SELECT term, sum(value) AS n FROM sklearn.preprocessing.count_vectorizer("
+                    "(SELECT * FROM (VALUES (1, 'the cat sat on the mat'), (2, 'a quick "
+                    "brown dog')) AS docs(id, body)), "
+                    "id := 'id', text := 'body') GROUP BY term ORDER BY n DESC, term"
                 ),
-                description="Term counts per document",
+                description="Corpus-wide term counts",
             )
         ]
         tags = {
-            "vgi.result_columns_md": columns_md_rows(
+            "vgi.result_dynamic_columns_md": dynamic_columns_md(
                 [
                     ("term", "VARCHAR", "Vocabulary term (or n-gram)."),
                     ("value", "BIGINT", "Term count in the document."),
@@ -241,13 +244,16 @@ class TfidfVectorizerFn(_Vectorizer):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.preprocessing.tfidf_vectorizer((SELECT * FROM (VALUES (1, 'the cat sat on the mat'), (2, 'a quick brown dog')) AS docs(id, body)), id := 'id', text := 'body')"  # noqa: E501
+                    "SELECT id, term, value FROM sklearn.preprocessing.tfidf_vectorizer("
+                    "(SELECT * FROM (VALUES (1, 'the cat sat on the mat'), (2, 'a quick "
+                    "brown dog')) AS docs(id, body)), "
+                    "id := 'id', text := 'body') WHERE value > 0.3"
                 ),
-                description="TF-IDF weights per document",
+                description="Heavily weighted TF-IDF terms per document",
             )
         ]
         tags = {
-            "vgi.result_columns_md": columns_md_rows(
+            "vgi.result_dynamic_columns_md": dynamic_columns_md(
                 [
                     ("term", "VARCHAR", "Vocabulary term (or n-gram)."),
                     ("value", "DOUBLE", "TF-IDF weight of the term in the document."),

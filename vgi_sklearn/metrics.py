@@ -60,7 +60,9 @@ class _BufferedMetric(AggregateFunction[PairState]):
         states: dict[int, PairState],
         group_ids: pa.Int64Array,
         y_true: Annotated[pa.DoubleArray, Param(doc="True (or label) values")],
-        y_pred: Annotated[pa.DoubleArray, Param(doc="Predicted values, scores, or probabilities")],
+        y_pred: Annotated[
+            pa.DoubleArray, Param(doc="The prediction for each row (a positive-class score for ranking metrics)")
+        ],
     ) -> None:
         """Accumulate this batch's non-NULL pairs into each group's state."""
         # Accumulate this batch per group, then *reassign* states[g] (the

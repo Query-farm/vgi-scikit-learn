@@ -26,8 +26,8 @@ from vgi.table_function import BindParams
 from vgi_rpc.rpc import OutputCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
-from .schema_utils import columns_md
 from .schema_utils import field as sfield
+from .schema_utils import result_columns_schema
 
 
 @dataclass(slots=True, frozen=True)
@@ -60,7 +60,7 @@ class ConfusionMatrix(SinkBuffer[ConfusionMatrixArgs, DrainState]):
         description = "Confusion matrix in long format: (actual, predicted, count)"
         categories = ["metrics", "classification"]
         tags = {
-            "vgi.result_columns_md": columns_md(_CONFUSION_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_CONFUSION_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that tabulates a confusion matrix from a buffered table of label pairs, "
                 "emitting it in long format. The table arg is `(SELECT actual_col, predicted_col FROM ...)`; "
@@ -85,7 +85,7 @@ class ConfusionMatrix(SinkBuffer[ConfusionMatrixArgs, DrainState]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.metrics.confusion_matrix("
+                    "SELECT actual, predicted, count FROM sklearn.metrics.confusion_matrix("
                     "(SELECT * FROM (VALUES (0, 0), (1, 1), (0, 1), (1, 0)) AS preds(y, yhat)), "
                     "actual := 'y', predicted := 'yhat')"
                 ),
@@ -169,7 +169,7 @@ class SilhouetteScore(SinkBuffer[SilhouetteArgs, DrainState]):
         description = "Mean silhouette coefficient of a clustering (features + label column)"
         categories = ["metrics", "clustering"]
         tags = {
-            "vgi.result_columns_md": columns_md(_SILHOUETTE_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_SILHOUETTE_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that scores how well-separated a clustering is, returning the mean "
                 "silhouette coefficient over all samples in one row. The table arg is "
@@ -194,7 +194,7 @@ class SilhouetteScore(SinkBuffer[SilhouetteArgs, DrainState]):
         }
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.metrics.silhouette_score((SELECT * FROM (VALUES (1, 0.1, 0.2, 0), (2, 0.2, 0.1, 0), (3, 5.0, 5.1, 1), (4, 5.1, 5.0, 1)) AS clustered(id, x1, x2, cluster)), label => 'cluster', id => 'id')",  # noqa: E501
+                sql="SELECT silhouette_score FROM sklearn.metrics.silhouette_score((SELECT * FROM (VALUES (1, 0.1::DOUBLE, 0.2::DOUBLE, 0), (2, 0.2, 0.1, 0), (3, 5.0, 5.1, 1), (4, 5.1, 5.0, 1)) AS clustered(id, x1, x2, cluster)), label => 'cluster', id => 'id')",  # noqa: E501
                 description="Silhouette score of a clustering",
             )
         ]
@@ -315,7 +315,7 @@ class RocCurve(_CurveFunction):
         description = "ROC curve points (threshold, fpr, tpr) for a binary classifier"
         categories = ["metrics", "classification", "ranking"]
         tags = {
-            "vgi.result_columns_md": columns_md(_ROC_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_ROC_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that traces the receiver operating characteristic (ROC) curve for a binary "
                 "classifier. The table arg is `(SELECT y_true_col, y_score_col FROM ...)`; `y_true :=` "
@@ -340,7 +340,7 @@ class RocCurve(_CurveFunction):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.metrics.roc_curve("
+                    "SELECT fpr, tpr, threshold FROM sklearn.metrics.roc_curve("
                     "(SELECT * FROM (VALUES (0, 0.1), (1, 0.9), (0, 0.2), (1, 0.8)) AS preds(y, p)), "
                     "y_true := 'y', y_score := 'p') ORDER BY fpr"
                 ),
@@ -378,7 +378,7 @@ class PrecisionRecallCurve(_CurveFunction):
         description = "Precision-recall curve points (threshold, precision, recall) for a binary classifier"
         categories = ["metrics", "classification", "ranking"]
         tags = {
-            "vgi.result_columns_md": columns_md(_PR_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_PR_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that traces the precision-recall curve for a binary classifier. The table "
                 "arg is `(SELECT y_true_col, y_score_col FROM ...)`; `y_true :=` names the 0/1 label column "
@@ -402,7 +402,7 @@ class PrecisionRecallCurve(_CurveFunction):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.metrics.precision_recall_curve("
+                    "SELECT recall, precision FROM sklearn.metrics.precision_recall_curve("
                     "(SELECT * FROM (VALUES (0, 0.1), (1, 0.9), (0, 0.2), (1, 0.8)) AS preds(y, p)), "
                     "y_true := 'y', y_score := 'p') ORDER BY recall"
                 ),
@@ -453,7 +453,7 @@ class CalibrationCurve(SinkBuffer[_CalibrationArgs, DrainState]):
         description = "Reliability (calibration) curve: predicted vs. observed probability per bin"
         categories = ["metrics", "classification"]
         tags = {
-            "vgi.result_columns_md": columns_md(_CALIBRATION_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_CALIBRATION_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that builds a reliability (calibration) curve to check whether a binary "
                 "classifier's predicted probabilities match observed outcome frequencies. The table arg is "
@@ -478,7 +478,7 @@ class CalibrationCurve(SinkBuffer[_CalibrationArgs, DrainState]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.metrics.calibration_curve("
+                    "SELECT prob_pred, prob_true FROM sklearn.metrics.calibration_curve("
                     "(SELECT * FROM (VALUES (0, 0.1), (1, 0.9), (0, 0.2), (1, 0.8)) AS preds(y, p)), "
                     "y_true := 'y', y_score := 'p', n_bins := 10) ORDER BY prob_pred"
                 ),

@@ -163,13 +163,13 @@ jobs:
       - name: Install the worker (from the lockfile)
         run: uv sync --frozen --python 3.13
       - name: Lint worker metadata (static)
-        uses: Query-farm/vgi-lint-check@v1
+        uses: Query-farm/vgi-lint-check@v2
         with:
           location: .venv/bin/vgi-sklearn
           execute: false
           fail-on: warning
       - name: Lint worker examples (execute)
-        uses: Query-farm/vgi-lint-check@v1
+        uses: Query-farm/vgi-lint-check@v2
         with:
           location: .venv/bin/vgi-sklearn
           execute: true

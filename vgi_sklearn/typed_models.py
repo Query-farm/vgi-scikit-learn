@@ -33,9 +33,9 @@ from vgi_rpc.rpc import OutputCollector
 from .buffering import DrainState, SinkBuffer, input_schema_of
 from .models import _ESTIMATORS, _FIT_SCHEMA, _fit_and_emit
 from .registry import validate_name
-from .schema_utils import columns_md
+from .schema_utils import result_columns_schema
 
-_FIT_COLUMNS_MD = columns_md(_FIT_SCHEMA)
+_FIT_COLUMNS_SCHEMA = result_columns_schema(_FIT_SCHEMA)
 
 _UNSET: Any = object()
 
@@ -51,6 +51,9 @@ class _HP:
     none_if: Any = _UNSET  # if the SQL value equals this, pass None to sklearn
     kwarg: str | None = None  # sklearn kwarg name, if it differs from ``name``
     wrap_tuple: bool = False  # wrap a scalar int as a 1-tuple (hidden_layer_sizes)
+    choices: tuple[str, ...] | None = None  # closed set of allowed values (VGI317)
+    gt: float | None = None  # exclusive lower bound
+    lt: float | None = None  # exclusive upper bound
 
 
 # Curated common hyperparameters per estimator. Defaults match scikit-learn's,
@@ -59,7 +62,7 @@ _RF = [
     _HP("n_estimators", int, 100, "Number of trees."),
     _HP("max_depth", int, 0, "Max tree depth; 0 = unlimited.", none_if=0),
     _HP("min_samples_split", int, 2, "Min samples to split an internal node."),
-    _HP("max_features", str, "sqrt", "Features considered per split ('sqrt', 'log2', 'all')."),
+    _HP("max_features", str, "sqrt", "Features considered per split.", choices=("sqrt", "log2", "all")),
     _HP("random_state", int, 0, "Random seed."),
 ]
 _GB = [
@@ -105,7 +108,7 @@ _HPARAMS: dict[str, list[_HP]] = {
     "logistic_regression": [
         _HP("C", float, 1.0, "Inverse regularization strength."),
         _HP("max_iter", int, 1000, "Max solver iterations."),
-        _HP("penalty", str, "l2", "Regularization penalty ('l2', 'l1', 'elasticnet', 'none')."),
+        _HP("penalty", str, "l2", "Regularization penalty.", choices=("l2", "l1", "elasticnet", "none")),
         _HP("solver", str, "lbfgs", "Optimization solver."),
     ],
     "random_forest_classifier": _RF,
@@ -127,14 +130,14 @@ _HPARAMS: dict[str, list[_HP]] = {
     ],
     "svc": [
         _HP("C", float, 1.0, "Regularization strength."),
-        _HP("kernel", str, "rbf", "Kernel ('rbf', 'linear', 'poly', 'sigmoid')."),
-        _HP("gamma", str, "scale", "Kernel coefficient ('scale', 'auto')."),
+        _HP("kernel", str, "rbf", "Kernel function.", choices=("rbf", "linear", "poly", "sigmoid")),
+        _HP("gamma", str, "scale", "Kernel coefficient.", choices=("scale", "auto")),
         _HP("degree", int, 3, "Degree for the 'poly' kernel."),
     ],
     "svr": [
         _HP("C", float, 1.0, "Regularization strength."),
-        _HP("kernel", str, "rbf", "Kernel ('rbf', 'linear', 'poly', 'sigmoid')."),
-        _HP("gamma", str, "scale", "Kernel coefficient ('scale', 'auto')."),
+        _HP("kernel", str, "rbf", "Kernel function.", choices=("rbf", "linear", "poly", "sigmoid")),
+        _HP("gamma", str, "scale", "Kernel coefficient.", choices=("scale", "auto")),
         _HP("epsilon", float, 0.1, "Epsilon-tube within which no penalty is given."),
     ],
     "knn_classifier": _KNN,
@@ -146,9 +149,9 @@ _HPARAMS: dict[str, list[_HP]] = {
     "gaussian_nb": [_HP("var_smoothing", float, 1e-9, "Variance smoothing added for stability.")],
     # --- additional classifiers ---
     "sgd_classifier": [
-        _HP("loss", str, "hinge", "Loss function ('hinge', 'log_loss', 'modified_huber')."),
+        _HP("loss", str, "hinge", "Loss function.", choices=("hinge", "log_loss", "modified_huber")),
         _HP("alpha", float, 0.0001, "Regularization strength."),
-        _HP("penalty", str, "l2", "Penalty ('l2', 'l1', 'elasticnet')."),
+        _HP("penalty", str, "l2", "Regularization penalty.", choices=("l2", "l1", "elasticnet")),
         _HP("max_iter", int, 1000, "Max passes over the training data."),
         _HP("random_state", int, 0, "Random seed."),
     ],
@@ -183,7 +186,7 @@ _HPARAMS: dict[str, list[_HP]] = {
     ],
     "linear_svc": [
         _HP("C", float, 1.0, "Regularization strength."),
-        _HP("loss", str, "squared_hinge", "Loss ('hinge' or 'squared_hinge')."),
+        _HP("loss", str, "squared_hinge", "Loss function.", choices=("hinge", "squared_hinge")),
         _HP("max_iter", int, 1000, "Max iterations."),
         _HP("random_state", int, 0, "Random seed."),
     ],
@@ -202,7 +205,7 @@ _HPARAMS: dict[str, list[_HP]] = {
         _HP("fit_prior", bool, True, "Whether to learn class prior probabilities."),
     ],
     "lda": [
-        _HP("solver", str, "svd", "Solver ('svd', 'lsqr', 'eigen')."),
+        _HP("solver", str, "svd", "Solver.", choices=("svd", "lsqr", "eigen")),
         _HP("tol", float, 1e-4, "Threshold for rank estimation (svd)."),
     ],
     "qda": [
@@ -217,9 +220,9 @@ _HPARAMS: dict[str, list[_HP]] = {
         _HP("fit_intercept", bool, True, "Whether to fit an intercept."),
     ],
     "sgd_regressor": [
-        _HP("loss", str, "squared_error", "Loss ('squared_error', 'huber', 'epsilon_insensitive')."),
+        _HP("loss", str, "squared_error", "Loss function.", choices=("squared_error", "huber", "epsilon_insensitive")),
         _HP("alpha", float, 0.0001, "Regularization strength."),
-        _HP("penalty", str, "l2", "Penalty ('l2', 'l1', 'elasticnet')."),
+        _HP("penalty", str, "l2", "Regularization penalty.", choices=("l2", "l1", "elasticnet")),
         _HP("max_iter", int, 1000, "Max passes over the training data."),
         _HP("random_state", int, 0, "Random seed."),
     ],
@@ -255,7 +258,7 @@ _HPARAMS: dict[str, list[_HP]] = {
         _HP("max_iter", int, 100, "Max iterations."),
     ],
     "quantile_regressor": [
-        _HP("quantile", float, 0.5, "Quantile to predict (0-1)."),
+        _HP("quantile", float, 0.5, "Quantile to predict, strictly between 0 and 1.", gt=0.0, lt=1.0),
         _HP("alpha", float, 1.0, "L1 regularization strength."),
         _HP("fit_intercept", bool, True, "Whether to fit an intercept."),
     ],
@@ -520,33 +523,30 @@ _DESC: dict[str, tuple[str, str, str]] = {
 }
 
 
-def _description_tags(est_name: str, spec: list[_HP]) -> dict[str, str]:
+def _description_tags(est_name: str) -> dict[str, str]:
     """Build estimator-specific ``vgi.description_llm`` / ``vgi.description_md`` tags."""
     task, how, best_for = _DESC[est_name]
-    hp_names = [hp.name for hp in spec]
-    hp_inline = ", ".join(f"`{n}`" for n in hp_names)
     llm = (
         f"Table function that trains a `{est_name}` {task} on a buffered training relation "
         f"`(SELECT ...)` (Arg(0)), with its common hyperparameters exposed as typed, named SQL "
-        f"arguments ({hp_inline}). A `{est_name}` {how}; it is well suited to {best_for}. Name the "
+        f"arguments (listed with their docs by `vgi_function_arguments()`). A `{est_name}` {how}; "
+        f"it is well suited to {best_for}. Name the "
         f"`target :=` label column (required) and optionally an `id :=` passthrough to exclude; every "
         f"other column is a feature and string columns auto one-hot-encode. Returns a one-row summary "
         f"(estimator, task, sample/feature counts, train score, feature list) plus the fitted `model` "
-        f"as a self-contained BLOB, and also persists it to the registry when `model_name :=` is given. "
+        f"as a self-contained `BLOB`, and also persists it to the registry when `model_name :=` is given. "
         f"Behaves exactly like generic `fit` but with discoverable, type-checked hyperparameters; score "
         f"new rows with `predict` (features align by name)."
     )
-    hp_bullets = "".join(f"  - {hp.name}: {hp.doc}\n" for hp in spec)
     md = (
         f"**fit_{est_name}** — train a {task} with typed hyperparameters; return a summary + a reusable "
-        f"model BLOB.\n\n"
+        f"model `BLOB`.\n\n"
         f"A `{est_name}` {how}, making it a good fit for {best_for}.\n\n"
         f"- Input: `(SELECT ...)` training table; `target :=` label (**required**); `id :=` excluded "
         f"passthrough; `model_name :=` to also save to the registry\n"
-        f"- Typed hyperparameters (named SQL args):\n"
-        f"{hp_bullets}"
+        f"- Typed hyperparameters as named SQL args, each documented in `vgi_function_arguments()`\n"
         f"- Output: one row with the estimator, task, sample/feature counts, train score, the feature "
-        f"list, and the `model` BLOB\n"
+        f"list, and the `model` `BLOB`\n"
         f"- String features one-hot-encode automatically; `predict` aligns features by name "
         f"(order-insensitive, extra columns ignored)"
     )
@@ -586,10 +586,30 @@ def _make_args_class(est_name: str, spec: list[_HP]) -> type:
     ]
     for hp in spec:
         fields.append(
-            (hp.name, Annotated[hp.type, Arg(hp.name, default=hp.default, doc=hp.doc)], dc_field(default=hp.default))
+            (
+                hp.name,
+                Annotated[
+                    hp.type,
+                    Arg(hp.name, default=hp.default, doc=hp.doc, choices=hp.choices, gt=hp.gt, lt=hp.lt),
+                ],
+                dc_field(default=hp.default),
+            )
         )
     cls_name = "Fit" + "".join(p.title() for p in est_name.split("_")) + "Args"
     return make_dataclass(cls_name, fields, frozen=True, slots=True)
+
+
+# Example training data per task: the four numeric iris measurements for
+# classifiers (the string species column would one-hot-encode into a leak of the
+# label), and diabetes -- a strictly positive target, as Poisson/Gamma/Tweedie
+# losses require -- for regressors.
+_EXAMPLE_INPUT = {
+    "classification": (
+        "(SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target "
+        "FROM sklearn.datasets.iris())"
+    ),
+    "regression": "(SELECT * FROM sklearn.datasets.diabetes())",
+}
 
 
 def _make_fit_function(est_name: str) -> type:
@@ -649,17 +669,18 @@ def _make_fit_function(est_name: str) -> type:
         {
             "name": fn_name,
             "description": f"Fit a {est_name} with typed hyperparameters; returns/stores the model",
-            "categories": ["models", "supervised", "typed"],
+            "categories": ["models", "supervised", "typed", task],
             "examples": [
                 FunctionExample(
                     sql=(
-                        f"SELECT * FROM sklearn.estimators.{fn_name}((SELECT * FROM sklearn.datasets.iris()), "
-                        f"target := 'target'" + (f", {param_hint}" if param_hint else "") + ")"
+                        f"SELECT estimator, task, n_samples, n_features, train_score "
+                        f"FROM sklearn.estimators.{fn_name}({_EXAMPLE_INPUT[task]}, "
+                        f"target := 'target', id := 'sample_id'" + (f", {param_hint}" if param_hint else "") + ")"
                     ),
                     description=f"Train a {est_name} with named hyperparameters",
                 )
             ],
-            "tags": {"vgi.result_columns_md": _FIT_COLUMNS_MD, **_description_tags(est_name, spec)},
+            "tags": {"vgi.result_columns_schema": _FIT_COLUMNS_SCHEMA, **_description_tags(est_name)},
         },
     )
     namespace = {

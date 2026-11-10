@@ -94,7 +94,7 @@ from .registry import (
     unpack_model,
     validate_name,
 )
-from .schema_utils import columns_md, columns_md_rows
+from .schema_utils import dynamic_variants_md, result_columns_schema
 from .schema_utils import field as sfield
 
 CLASSIFICATION = "classification"
@@ -235,7 +235,7 @@ _FIT_SCHEMA = pa.schema(
         sfield("train_score", pa.float64(), "In-sample score (accuracy or R^2)."),
         sfield("features", pa.list_(pa.string()), "Ordered feature column names.", nullable=False),
         sfield(
-            "model", pa.binary(), "The fitted model as a self-contained BLOB (estimator + metadata).", nullable=False
+            "model", pa.binary(), "The fitted model as a self-contained `BLOB` (estimator + metadata).", nullable=False
         ),
     ]
 )
@@ -255,7 +255,7 @@ def _fit_and_emit(
     id_col: str,
     params_dict: dict[str, Any],
 ) -> None:
-    """Fit ``estimator`` on the buffered table, persist if named, emit summary + BLOB.
+    """Fit ``estimator`` on the buffered table, persist if named, emit summary + `BLOB`.
 
     Shared by the generic ``fit`` and the typed ``fit_<estimator>`` functions.
     """
@@ -305,7 +305,7 @@ def _fit_and_emit(
 
 
 class FitModel(SinkBuffer[FitArgs, DrainState]):
-    """Buffer a training table, fit an estimator, persist it, return a summary + BLOB."""
+    """Buffer a training table, fit an estimator, persist it, return a summary + `BLOB`."""
 
     FunctionArguments: ClassVar[type] = FitArgs
 
@@ -316,29 +316,29 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
         description = "Fit a supervised estimator and store it in the model registry"
         categories = ["models", "supervised"]
         tags = {
-            "vgi.result_columns_md": columns_md(_FIT_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_FIT_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that trains a supervised estimator on a buffered training relation "
                 "`(SELECT ...)` (Arg(0)) and returns a one-row summary plus the fitted `model` as a "
-                "self-contained BLOB. Name the `target :=` label column (required) and optionally an `id :=` "
+                "self-contained `BLOB`. Name the `target :=` label column (required) and optionally an `id :=` "
                 "to exclude; every other column is a feature (string columns auto one-hot-encode). Pick the "
                 "algorithm with `estimator :=` (e.g. `random_forest_classifier`, `logistic_regression`, "
                 "`ridge` — see `fit_<estimator>` for typed hyperparams) and pass `params :=` as JSON. The "
-                "model is **always** returned as a BLOB; supply `model_name :=` to also persist it to the "
+                "model is **always** returned as a `BLOB`; supply `model_name :=` to also persist it to the "
                 "registry. Output columns: `model_name`, `estimator`, `task`, `n_samples`, `n_features`, "
                 "`n_classes`, `train_score`, `features`, `model`. Score new data with `predict` "
                 "(features align by name)."
             ),
             "vgi.doc_md": (
-                "**fit** — train a supervised estimator; return a summary + a reusable model BLOB.\n\n"
-                "Buffers the training table, fits the estimator, and emits one row; the `model` BLOB is "
+                "**fit** — train a supervised estimator; return a summary + a reusable model `BLOB`.\n\n"
+                "Buffers the training table, fits the estimator, and emits one row; the `model` `BLOB` is "
                 "self-contained (estimator + metadata) and feeds `predict`/`permutation_importance` even "
                 "without persisting.\n\n"
                 "- Input: `(SELECT ...)` training table; `target :=` label (**required**); `id :=` excluded "
                 "passthrough; `estimator :=` algorithm name; `params :=` hyperparameter JSON; `model_name :=` "
                 "to also save to the registry\n"
                 "- Output: `model_name`, `estimator`, `task`, `n_samples`, `n_features`, `n_classes`, "
-                "`train_score`, `features`, and the `model` BLOB\n"
+                "`train_score`, `features`, and the `model` `BLOB`\n"
                 "- String features one-hot-encode automatically; `n_features` is the original count; predict "
                 "aligns features by name (order-insensitive, extra columns ignored)"
             ),
@@ -346,7 +346,7 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.models.fit("
+                    "SELECT model_name, estimator, n_samples, train_score FROM sklearn.models.fit("
                     "(SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target "
                     "FROM sklearn.datasets.iris()), model_name => 'iris_rf', "
                     "estimator => 'random_forest_classifier', target => 'target', id => 'sample_id')"
@@ -386,7 +386,7 @@ class FitModel(SinkBuffer[FitArgs, DrainState]):
         state: DrainState,
         out: OutputCollector,
     ) -> None:
-        """Fit on the buffered table and emit the one-row training summary + BLOB."""
+        """Fit on the buffered table and emit the one-row training summary + `BLOB`."""
         if state.done:
             out.finish()
             return
@@ -449,20 +449,21 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
         description = "Score a table through a stored model, emitting predictions"
         categories = ["models", "supervised", "inference"]
         tags = {
-            "vgi.result_columns_md": columns_md_rows(
+            "vgi.result_dynamic_columns_md": dynamic_variants_md(
                 [
-                    ("prediction", "BIGINT or DOUBLE", "Predicted class label (classification) or value (regression)."),
+                    ("Classifier", [("prediction", "BIGINT", "Predicted class label.")]),
+                    ("Regressor", [("prediction", "DOUBLE", "Predicted value.")]),
                 ],
                 note=(
                     "If an `id` column is named, it is carried through as the first column. With "
-                    "`with_proba := true` on a classifier, one `proba_<class>` DOUBLE column is added per class."
+                    "`with_proba := true` on a classifier, one `proba_<class>` `DOUBLE` column is added per class."
                 ),
             ),
             "vgi.doc_llm": (
                 "Table-in/table-out function that streams a relation `(SELECT ...)` (Arg(0)) through a stored "
                 "model and emits one `prediction` per row (`BIGINT` class label for classification, `DOUBLE` "
                 "for regression). Identify the model with **either** `model_name :=` (a registry name) **or** "
-                "`model :=` (a model BLOB from `fit`); name an optional `id :=` to carry through as the first "
+                "`model :=` (a model `BLOB` from `fit`); name an optional `id :=` to carry through as the first "
                 "column. Features align **by name**, so column order is irrelevant and extra columns are "
                 "ignored — missing feature columns raise a clear error at bind. Set `with_proba := true` on a "
                 "classifier to add one `proba_<class>` `DOUBLE` per class. It warns via the logs if the "
@@ -470,12 +471,12 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
             ),
             "vgi.doc_md": (
                 "**predict** — score a table through a stored model, row by row.\n\n"
-                "Streams the input through a model identified by registry name or BLOB and emits a prediction "
+                "Streams the input through a model identified by registry name or `BLOB` and emits a prediction "
                 "per row; the model replays any fit-time one-hot encoding.\n\n"
                 "- Input: `(SELECT ...)` table containing the model's feature columns\n"
-                "- `model_name :=` **or** `model :=` (BLOB) to pick the model; `id :=` optional passthrough; "
+                "- `model_name :=` **or** `model :=` (`BLOB`) to pick the model; `id :=` optional passthrough; "
                 "`with_proba :=` adds `proba_<class>` columns for classifiers\n"
-                "- Output: `prediction` (BIGINT label or DOUBLE value), plus optional `id` and `proba_<class>` "
+                "- Output: `prediction` (`BIGINT` label or `DOUBLE` value), plus optional `id` and `proba_<class>` "
                 "columns\n"
                 "- Features match by name (reorder-safe, extras ignored; missing ones error at bind); logs a "
                 "warning on a scikit-learn version mismatch"
@@ -484,7 +485,7 @@ class PredictModel(TableInOutGenerator[PredictArgs]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.models.predict((SELECT * FROM sklearn.datasets.iris()), "
+                    "SELECT sample_id, prediction FROM sklearn.models.predict((SELECT * FROM sklearn.datasets.iris()), "
                     "model_name := 'iris_rf', id := 'sample_id')"
                 ),
                 description="Predict with the stored 'iris_rf' model",
@@ -615,13 +616,10 @@ class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
         description = "Out-of-fold cross-validated predictions (no model is stored)"
         categories = ["models", "supervised", "evaluation"]
         tags = {
-            "vgi.result_columns_md": columns_md_rows(
+            "vgi.result_dynamic_columns_md": dynamic_variants_md(
                 [
-                    (
-                        "prediction",
-                        "BIGINT or DOUBLE",
-                        "Out-of-fold predicted class label (classification) or value (regression).",
-                    ),
+                    ("Classifier", [("prediction", "BIGINT", "Out-of-fold predicted class label.")]),
+                    ("Regressor", [("prediction", "DOUBLE", "Out-of-fold predicted value.")]),
                 ],
                 note="If an `id` column is named, it is carried through as the first column.",
             ),
@@ -641,7 +639,7 @@ class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
                 "estimate for evaluation or stacking.\n\n"
                 "- Input: `(SELECT ...)` training table; `target :=` label (**required**); `id :=` optional "
                 "passthrough; `estimator :=`, `params :=` JSON, `cv :=` folds (default 5)\n"
-                "- Output: one `prediction` (BIGINT label or DOUBLE value) per input row\n"
+                "- Output: one `prediction` (`BIGINT` label or `DOUBLE` value) per input row\n"
                 "- No registry write; for per-fold scores instead of per-row predictions use "
                 "`cross_val_score`"
             ),
@@ -649,7 +647,7 @@ class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.models.cross_val_predict("
+                    "SELECT sample_id, prediction FROM sklearn.models.cross_val_predict("
                     "(SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm, target "
                     "FROM sklearn.datasets.iris()), estimator => 'logistic_regression', target => 'target', id => 'sample_id')"  # noqa: E501
                 ),
@@ -754,7 +752,7 @@ class CrossValScore(SinkBuffer[CrossValScoreArgs, DrainState]):
         description = "Cross-validated held-out scores, one row per fold (no model is stored)"
         categories = ["models", "supervised", "evaluation"]
         tags = {
-            "vgi.result_columns_md": columns_md(_CV_SCORE_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_CV_SCORE_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that runs k-fold cross-validation on a training relation `(SELECT ...)` "
                 "(Arg(0)) and emits one `(fold, score)` row per fold — the held-out score on each fold. Name "
@@ -772,7 +770,7 @@ class CrossValScore(SinkBuffer[CrossValScoreArgs, DrainState]):
                 "- Input: `(SELECT ...)` training table; `target :=` label (**required**); `estimator :=`, "
                 "`params :=` JSON, `cv :=` folds (default 5), `scoring :=` scorer name (default: the "
                 "estimator's own)\n"
-                "- Output: `fold` BIGINT (0-based) and `score` DOUBLE per fold\n"
+                "- Output: `fold` `BIGINT` (0-based) and `score` `DOUBLE` per fold\n"
                 "- `AVG`/`STDDEV` the `score` column for a summary; for per-row predictions use "
                 "`cross_val_predict`"
             ),
@@ -885,13 +883,13 @@ class PermutationImportance(SinkBuffer[PermImportanceArgs, DrainState]):
         description = "Model-agnostic feature importance: the drop in score when each feature is shuffled"
         categories = ["models", "inspection", "evaluation"]
         tags = {
-            "vgi.result_columns_md": columns_md(_PERM_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_PERM_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that computes model-agnostic permutation importance for a stored model: it "
                 "measures how much the score drops when each feature's values are randomly shuffled (a "
                 "feature that matters loses more score). It buffers the evaluation relation `(SELECT ...)` "
                 "(Arg(0)) — the model's features plus the required `target :=` column — and identifies the "
-                "model via **either** `model_name :=` or `model :=` (a BLOB). Set `n_repeats :=` shuffles "
+                "model via **either** `model_name :=` or `model :=` (a `BLOB`). Set `n_repeats :=` shuffles "
                 "(default 5), optional `scoring :=`, and `random_state :=`. It emits one row per feature: "
                 "`feature`, `importance_mean`, `importance_std`. `ORDER BY importance_mean DESC` to rank "
                 "features; works for any fitted estimator, unlike model-specific importances."
@@ -901,7 +899,7 @@ class PermutationImportance(SinkBuffer[PermImportanceArgs, DrainState]):
                 "Loads a stored model, shuffles each feature in turn over the evaluation table, and reports "
                 "how much that degrades the score — a model-agnostic importance.\n\n"
                 "- Input: `(SELECT ...)` table with the model's features + the target; `model_name :=` **or** "
-                "`model :=` (BLOB); `target :=` (**required**); `n_repeats :=` (default 5), `scoring :=`, "
+                "`model :=` (`BLOB`); `target :=` (**required**); `n_repeats :=` (default 5), `scoring :=`, "
                 "`random_state :=`\n"
                 "- Output per feature: `feature`, `importance_mean`, `importance_std`\n"
                 "- Works for any fitted estimator (no built-in importances needed); "
@@ -911,7 +909,8 @@ class PermutationImportance(SinkBuffer[PermImportanceArgs, DrainState]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.models.permutation_importance((SELECT * FROM sklearn.datasets.iris()), "
+                    "SELECT feature, importance_mean FROM sklearn.models.permutation_importance("
+                    "(SELECT * FROM sklearn.datasets.iris()), "
                     "model_name := 'iris_rf', target := 'target') ORDER BY importance_mean DESC"
                 ),
                 description="Rank iris features by permutation importance for the stored 'iris_rf' model",
@@ -1033,13 +1032,13 @@ class PartialDependence(SinkBuffer[PartialDependenceArgs, DrainState]):
         description = "How a stored model's average prediction changes as one feature varies over a grid"
         categories = ["models", "inspection"]
         tags = {
-            "vgi.result_columns_md": columns_md(_PD_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_PD_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that computes the partial dependence of a stored model on one feature: how "
                 "the model's average prediction shifts as that feature is swept over a grid while the other "
                 "features follow the background data. It buffers the background relation `(SELECT ...)` "
                 "(Arg(0)) (the model's feature columns), identifies the model via **either** `model_name :=` "
-                "or `model :=` (a BLOB), and varies the required numeric `feature :=` over `grid_resolution :=` "
+                "or `model :=` (a `BLOB`), and varies the required numeric `feature :=` over `grid_resolution :=` "
                 "points (default 100). A categorical feature raises a clear error. Output is **long format** "
                 "`(feature_value, class, partial_dependence)`: `class` is NULL for regression / the positive "
                 "binary class, or one curve per class for multiclass. `ORDER BY feature_value` to plot the "
@@ -1050,7 +1049,7 @@ class PartialDependence(SinkBuffer[PartialDependenceArgs, DrainState]):
                 "Sweeps a feature over a grid (others drawn from the background table) and averages the "
                 "model's output, showing the feature's isolated effect.\n\n"
                 "- Input: `(SELECT ...)` background table with the model's features; `model_name :=` **or** "
-                "`model :=` (BLOB); `feature :=` the numeric column to vary (**required**, categorical "
+                "`model :=` (`BLOB`); `feature :=` the numeric column to vary (**required**, categorical "
                 "errors); `grid_resolution :=` grid points (default 100)\n"
                 "- Output (long): `feature_value`, `class` (NULL for regression/positive binary class, or one "
                 "per class for multiclass), `partial_dependence`\n"
@@ -1060,7 +1059,8 @@ class PartialDependence(SinkBuffer[PartialDependenceArgs, DrainState]):
         examples = [
             FunctionExample(
                 sql=(
-                    "SELECT * FROM sklearn.models.partial_dependence((SELECT * FROM sklearn.datasets.iris()), "
+                    "SELECT feature_value, class, partial_dependence FROM sklearn.models.partial_dependence("
+                    "(SELECT * FROM sklearn.datasets.iris()), "
                     "model_name := 'iris_rf', feature := 'petal_length_cm') ORDER BY feature_value"
                 ),
                 description="Partial dependence of 'iris_rf' on petal length",
@@ -1205,11 +1205,11 @@ class ListModels(TableFunctionGenerator[NoArgs]):
         description = "List all models in the registry"
         categories = ["models", "registry"]
         tags = {
-            "vgi.result_columns_md": columns_md(_MODEL_INFO_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_MODEL_INFO_SCHEMA),
             "vgi.doc_llm": (
                 "Zero-argument table function that lists metadata for every model persisted in the registry "
                 "(those saved by `fit`/`fit_pipeline`/`fit_<estimator>` with a `model_name`). Call it as "
-                "`SELECT * FROM sklearn.models.list_models()` with no arguments. Each row describes one stored model: "
+                "`sklearn.models.list_models()` with no arguments. Each row describes one stored model: "
                 "`model_name`, `estimator`, `task`, `target`, `n_features`, `n_samples`, `n_classes`, "
                 "`train_score`, `sklearn_version`, `created_at`, and the ordered `features` list. Use it to "
                 "discover what is available before calling `predict`, or to audit/manage the registry; "
@@ -1224,7 +1224,15 @@ class ListModels(TableFunctionGenerator[NoArgs]):
                 "model, `drop_model('name')` removes one"
             ),
         }
-        examples = [FunctionExample(sql="SELECT * FROM sklearn.models.list_models()", description="List stored models")]
+        examples = [
+            FunctionExample(
+                sql=(
+                    "SELECT model_name, estimator, train_score FROM "
+                    "sklearn.models.list_models() ORDER BY created_at DESC"
+                ),
+                description="List stored models, newest first",
+            )
+        ]
 
     @classmethod
     def cardinality(cls, params: BindParams[NoArgs]) -> TableCardinality:
@@ -1259,7 +1267,7 @@ class ModelInfo(TableFunctionGenerator[ModelInfoArgs]):
         description = "Describe a single stored model (one row, empty if absent)"
         categories = ["models", "registry"]
         tags = {
-            "vgi.result_columns_md": columns_md(_MODEL_INFO_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_MODEL_INFO_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that describes a single registered model by name, returning one metadata row "
                 "(or **zero rows if the model does not exist** — it does not error). Pass the model name "
@@ -1280,7 +1288,8 @@ class ModelInfo(TableFunctionGenerator[ModelInfoArgs]):
         }
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.models.model_info('iris_rf')", description="Show one model's metadata"
+                sql="SELECT estimator, task, n_features, train_score FROM sklearn.models.model_info('iris_rf')",
+                description="Show one model's metadata",
             )
         ]
 
@@ -1329,7 +1338,7 @@ class DropModel(TableFunctionGenerator[DropModelArgs]):
         description = "Delete a model from the registry"
         categories = ["models", "registry"]
         tags = {
-            "vgi.result_columns_md": columns_md(_DROP_SCHEMA),
+            "vgi.result_columns_schema": result_columns_schema(_DROP_SCHEMA),
             "vgi.doc_llm": (
                 "Table function that deletes a model from the registry by name and reports the outcome. Pass "
                 "the model name positionally, e.g. `sklearn.models.drop_model('iris_rf')`. It removes the stored "
@@ -1341,7 +1350,7 @@ class DropModel(TableFunctionGenerator[DropModelArgs]):
             "vgi.doc_md": (
                 "**drop_model** — delete a model from the registry.\n\n"
                 "- Arg: the model name, passed positionally (`drop_model('name')`)\n"
-                "- Returns one row: `model_name` and `dropped` BOOLEAN (TRUE if removed, FALSE if it did not "
+                "- Returns one row: `model_name` and `dropped` `BOOLEAN` (TRUE if removed, FALSE if it did not "
                 "exist)\n"
                 "- Idempotent — dropping a missing name returns `dropped = false` rather than erroring; pair "
                 "with `list_models` to find what to remove"
@@ -1349,7 +1358,7 @@ class DropModel(TableFunctionGenerator[DropModelArgs]):
         }
         examples = [
             FunctionExample(
-                sql="SELECT * FROM sklearn.models.drop_model('iris_rf')", description="Delete a stored model"
+                sql="SELECT dropped FROM sklearn.models.drop_model('iris_rf')", description="Delete a stored model"
             )
         ]
 
