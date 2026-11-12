@@ -48,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -63,7 +63,6 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest,  asset: haybarn_unittest-linux-amd64.zip }
-          - { os: macos-latest,   asset: haybarn_unittest-osx-arm64.zip }
           - { os: windows-latest, asset: haybarn_unittest-windows-amd64.zip }
     runs-on: ${{ matrix.os }}
     defaults:
