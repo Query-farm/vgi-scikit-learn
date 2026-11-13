@@ -7,8 +7,6 @@
 # vgi-sklearn
 
 [![CI](https://github.com/Query-farm/vgi-scikit-learn/actions/workflows/ci.yml/badge.svg)](https://github.com/Query-farm/vgi-scikit-learn/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/vgi-sklearn.svg)](https://pypi.org/project/vgi-sklearn/)
-[![Python](https://img.shields.io/pypi/pyversions/vgi-sklearn.svg)](https://pypi.org/project/vgi-sklearn/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **Train and run machine-learning models in pure SQL.** `vgi-sklearn` exposes
@@ -563,13 +561,15 @@ this worker further restricts the trusted set to the `scikit-learn` / `numpy` /
 
 ## Install
 
+The worker isn't on PyPI; install it from a tagged GitHub release:
+
 ```sh
-pip install vgi-sklearn        # or: uvx vgi-sklearn
+uv tool install git+https://github.com/Query-farm/vgi-scikit-learn@v0.3.0
 ```
 
 This provides the `vgi-sklearn` (stdio, for DuckDB to spawn) and
 `vgi-sklearn-http` console scripts. Then `ATTACH 'sklearn' (TYPE vgi, LOCATION
-'vgi-sklearn')`. To attach a hosted HTTP deployment instead:
+'vgi-sklearn')`, or skip the install with `LOCATION 'uvx --from git+https://github.com/Query-farm/vgi-scikit-learn@v0.3.0 vgi-sklearn'`. To attach a hosted HTTP deployment instead:
 `ATTACH 'sklearn' (TYPE vgi, LOCATION 'https://<host>')`.
 
 ## Run via Docker
@@ -592,8 +592,8 @@ The image declares the state mount it needs via the `farm.query.vgi.volumes`
 label, so a VGI extension can discover and inject the `-v` mount automatically.
 `/data` holds the model registry (`/data/models`) and the shared `BoundStorage`
 SQLite (`/data/state`); mounting one named volume across instances shares both.
-On macOS/Windows there is no Docker host runtime for those OSes — install the
-cross-platform PyPI package instead (above). Images are cosign-signed (keyless)
+On macOS/Windows there is no Docker host runtime for those OSes — install from the
+GitHub release instead (above). Images are cosign-signed (keyless)
 with provenance + SBOM attestations.
 
 ## Local development
@@ -627,17 +627,17 @@ The two artifacts publish independently, gated on the full CI suite:
   — on a **version tag push** (`vX.Y.Z`): multi-arch, built per-arch on native
   runners, tested in both transports before push, merged into one manifest, and
   cosign-signed. (Pushes to `main` publish `:edge`.)
-- **PyPI** ([`publish.yml`](.github/workflows/publish.yml)) — on a **GitHub
-  Release**: `uv build && uv publish` (token in the `PYPI_API_TOKEN` repo
-  secret). Publishing a Release also creates the tag, so it ships the image too.
+- **Release distributions** ([`publish.yml`](.github/workflows/publish.yml)) — on a
+  **GitHub Release**: builds the sdist + wheel and attaches them to the Release.
+  Publishing a Release also creates the tag, so it ships the image too.
 
-So you can cut a Docker-only release (push a tag) without touching PyPI.
+So you can cut a Docker-only release (push a tag) without cutting a GitHub Release.
 
 The version is single-sourced from `__version__` in
 [`vgi_sklearn/__init__.py`](vgi_sklearn/__init__.py) (hatchling reads it; the
 worker advertises it as `implementation_version`). **Bump it there before
 tagging** — both release jobs verify the release tag matches it
-([`ci/check-version.sh`](ci/check-version.sh)), so the PyPI wheel, the image
+([`ci/check-version.sh`](ci/check-version.sh)), so the release wheel, the image
 tag, and the version the worker reports over VGI always agree.
 
 ## License

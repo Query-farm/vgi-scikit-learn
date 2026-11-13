@@ -7,7 +7,7 @@
 # inputs.
 #
 # Tag-driven: vX.Y.Z -> :X.Y.Z/:X.Y/:latest, push to main -> :edge. Decoupled
-# from the PyPI publish (publish.yml, release-driven). Publishing a GitHub
+# from the release workflow (publish.yml, release-driven). Publishing a GitHub
 # Release creates the tag, which fires this too.
 name: Publish image to ghcr.io
 
