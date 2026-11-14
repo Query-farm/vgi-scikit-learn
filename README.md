@@ -656,3 +656,7 @@ tag, and the version the worker reports over VGI always agree.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## SQL notebook
+
+See the [executed tree-capacity walkthrough](notebooks/README.md) for training versus held-out error, with synthetic inputs, an isolated model registry and a reproducible notebook environment.

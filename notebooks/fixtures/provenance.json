@@ -1,0 +1,12 @@
+{
+  "source": "Entirely invented regression samples; no observed subjects, transactions or timestamps.",
+  "file": "synthetic_regression.csv",
+  "sha256": "0d57222dcee79598dcf063c7c47a3dbb96a4462146d2cc3050f3cc13ef01b07d",
+  "generator": "NumPy Generator(PCG64(20261114)); uniform(-3,3) x and independent Normal(0,0.35) noise.",
+  "numpy_version": "2.5.4",
+  "conditional_mean": "sin(1.5*x) + 0.2*x",
+  "units": "x and target are dimensionless synthetic quantities.",
+  "train_rows": 80,
+  "test_rows": 120,
+  "split": "Separate draws from the same stated distribution; labels are fixed before fitting."
+}
