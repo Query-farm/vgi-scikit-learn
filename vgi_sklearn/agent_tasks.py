@@ -289,4 +289,23 @@ AGENT_TEST_TASKS: list[dict[str, str]] = [
             "the delete succeeded."
         ),
     },
+    {
+        "name": "wine_knn_misclassified_per_cultivar",
+        "prompt": (
+            "Using the worker's built-in wine dataset, get 5-fold cross-validated (out-of-fold) predictions"
+            " of a k-nearest-neighbours classifier with default settings, using all 13 chemical "
+            "measurements as features. For each true cultivar class code (target 0, 1, 2) report how many "
+            "wines were predicted as a different class. Return one row per target with columns target and "
+            "misclassified, ordered by target."
+        ),
+    },
+    {
+        "name": "scaled_ward_cluster_species_agreement",
+        "prompt": (
+            "Standardize the four iris measurements (zero mean, unit variance), then cluster the "
+            "standardized flowers into 3 groups with Ward agglomerative clustering. How well do the "
+            "clusters recover the true species? Return the adjusted Rand index between the clusters and "
+            "the species as a single value rounded to 3 decimal places."
+        ),
+    },
 ]

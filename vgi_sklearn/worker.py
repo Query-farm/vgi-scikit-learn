@@ -25,6 +25,13 @@ from vgi.catalog.catalog_interface import CatalogAttachResult, CatalogInfo
 
 from vgi_sklearn import __version__
 from vgi_sklearn.agent_tasks import AGENT_TEST_TASKS
+from vgi_sklearn.composed_examples import (
+    KMEANS_SILHOUETTE,
+    KMEANS_VS_SPECIES,
+    OOF_CONFUSION_MATRIX,
+    SCALED_PCA_BY_SPECIES,
+    as_query,
+)
 from vgi_sklearn.datasets import DATASET_FUNCTIONS
 from vgi_sklearn.feature_selection import FEATURE_SELECTION_FUNCTIONS
 from vgi_sklearn.grouped import GROUPED_FUNCTIONS
@@ -156,6 +163,8 @@ _CATALOG_EXECUTABLE_EXAMPLES = json.dumps(
                 "estimator := 'logistic_regression', target := 'target', cv := 3)"
             ),
         },
+        as_query(OOF_CONFUSION_MATRIX),
+        as_query(KMEANS_VS_SPECIES),
     ]
 )
 _CATALOG_TAGS = {
@@ -240,7 +249,9 @@ _SCHEMA_META: dict[str, dict[str, str]] = {
                         "SELECT sklearn.metrics.r2_score(actual, predicted) "
                         "FROM (VALUES (3.0, 2.5), (5.0, 5.1)) AS t(actual, predicted)"
                     ),
-                }
+                },
+                as_query(OOF_CONFUSION_MATRIX),
+                as_query(KMEANS_SILHOUETTE),
             ]
         ),
     },
@@ -273,7 +284,9 @@ _SCHEMA_META: dict[str, dict[str, str]] = {
                         "(SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, "
                         "petal_width_cm FROM sklearn.datasets.iris()), id := 'sample_id') LIMIT 5"
                     ),
-                }
+                },
+                as_query(SCALED_PCA_BY_SPECIES),
+                as_query(KMEANS_VS_SPECIES),
             ]
         ),
     },
@@ -306,7 +319,8 @@ _SCHEMA_META: dict[str, dict[str, str]] = {
                         "(SELECT * FROM sklearn.datasets.iris()), "
                         "estimator := 'logistic_regression', target := 'target', cv := 3)"
                     ),
-                }
+                },
+                as_query(OOF_CONFUSION_MATRIX),
             ]
         ),
     },

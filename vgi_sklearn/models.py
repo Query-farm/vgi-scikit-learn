@@ -83,6 +83,7 @@ from vgi_rpc.rpc import OutputCollector
 from vgi_rpc.rpc import OutputCollector as InOutCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of
+from .composed_examples import OOF_CONFUSION_MATRIX
 from .features import build_x, categorical_mask, rows_from_table, wrap_estimator
 from .registry import (
     ModelMetadata,
@@ -652,7 +653,8 @@ class CrossValPredict(SinkBuffer[CrossValArgs, DrainState]):
                     "FROM sklearn.datasets.iris()), estimator => 'logistic_regression', target => 'target', id => 'sample_id')"  # noqa: E501
                 ),
                 description="5-fold out-of-fold predictions on iris",
-            )
+            ),
+            OOF_CONFUSION_MATRIX,
         ]
 
     @classmethod

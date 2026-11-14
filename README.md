@@ -437,6 +437,19 @@ FROM sklearn.preprocessing.isolation_forest(
 WHERE is_outlier = 1;
 ```
 
+Join the cluster labels back to known labels and score them with the clustering
+metrics — here, how well k-means recovers the iris species (adjusted Rand 0.73):
+
+```sql
+SELECT sklearn.metrics.adjusted_rand_score(i.target, k.cluster) AS adjusted_rand,
+       sklearn.metrics.homogeneity_score(i.target, k.cluster)   AS homogeneity
+FROM sklearn.preprocessing.kmeans(
+       (SELECT sample_id, sepal_length_cm, sepal_width_cm, petal_length_cm, petal_width_cm
+        FROM sklearn.datasets.iris()),
+       id := 'sample_id', n_clusters := 3) k
+JOIN sklearn.datasets.iris i USING (sample_id);
+```
+
 ### Get sample data to play with
 
 scikit-learn's bundled datasets are table functions — handy for trying things or

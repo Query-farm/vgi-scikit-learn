@@ -32,6 +32,7 @@ from vgi.table_function import BindParams
 from vgi_rpc.rpc import OutputCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
+from .composed_examples import KMEANS_VS_SPECIES, SCALED_PCA_BY_SPECIES
 from .features import rows_from_table
 from .schema_utils import dynamic_columns_md
 from .schema_utils import field as sfield
@@ -453,7 +454,7 @@ class PcaFn(_BufferingTransform[ComponentsArgs]):
         name = "pca"
         description = "Principal component analysis (linear dimensionality reduction)"
         categories = ["decomposition", "dimensionality-reduction"]
-        examples = _ex("pca", "n_components => 2", shape=_COMPONENTS)
+        examples = [*_ex("pca", "n_components => 2", shape=_COMPONENTS), SCALED_PCA_BY_SPECIES]
         tags = {
             "vgi.result_dynamic_columns_md": _COMPONENTS_MD,
             "vgi.doc_llm": (
@@ -573,7 +574,7 @@ class KMeansFn(_BufferingTransform[KMeansArgs]):
         name = "kmeans"
         description = "K-Means clustering; emits a cluster label per row"
         categories = ["clustering"]
-        examples = _ex("kmeans", "n_clusters => 3", shape=_CLUSTERS)
+        examples = [*_ex("kmeans", "n_clusters => 3", shape=_CLUSTERS), KMEANS_VS_SPECIES]
         tags = {
             "vgi.result_dynamic_columns_md": _CLUSTER_MD,
             "vgi.doc_llm": (

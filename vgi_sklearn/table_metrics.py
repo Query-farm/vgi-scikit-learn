@@ -26,6 +26,7 @@ from vgi.table_function import BindParams
 from vgi_rpc.rpc import OutputCollector
 
 from .buffering import DrainState, SinkBuffer, input_schema_of, matrix
+from .composed_examples import KMEANS_SILHOUETTE, OOF_CONFUSION_MATRIX
 from .schema_utils import field as sfield
 from .schema_utils import result_columns_schema
 
@@ -90,7 +91,8 @@ class ConfusionMatrix(SinkBuffer[ConfusionMatrixArgs, DrainState]):
                     "actual := 'y', predicted := 'yhat')"
                 ),
                 description="Long-format confusion matrix",
-            )
+            ),
+            OOF_CONFUSION_MATRIX,
         ]
 
     @classmethod
@@ -196,7 +198,8 @@ class SilhouetteScore(SinkBuffer[SilhouetteArgs, DrainState]):
             FunctionExample(
                 sql="SELECT silhouette_score FROM sklearn.metrics.silhouette_score((SELECT * FROM (VALUES (1, 0.1::DOUBLE, 0.2::DOUBLE, 0), (2, 0.2, 0.1, 0), (3, 5.0, 5.1, 1), (4, 5.1, 5.0, 1)) AS clustered(id, x1, x2, cluster)), label => 'cluster', id => 'id')",  # noqa: E501
                 description="Silhouette score of a clustering",
-            )
+            ),
+            KMEANS_SILHOUETTE,
         ]
 
     @classmethod

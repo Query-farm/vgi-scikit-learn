@@ -7,7 +7,8 @@ this file is the "how it's built and where the sharp edges are" companion.
 
 A [VGI](https://github.com/query-farm/vgi-python) worker exposing scikit-learn
 to DuckDB/SQL. `sklearn_worker.py` assembles every function into one `sklearn`
-catalog (single `main` schema) and runs it over stdio (local) or HTTP (Fly.io).
+catalog (five per-area schemas: `datasets`, `metrics`, `preprocessing`,
+`models`, `estimators`) and runs it over stdio (local) or HTTP (Fly.io).
 Built on the local `~/Development/vgi-python` + `~/Development/vgi-rpc`
 checkouts; modeled on `~/Development/vgi-trains-python-fly`.
 
@@ -19,6 +20,7 @@ vgi_sklearn/
   datasets.py         dataset table functions (toy, generators, california_housing)
   metrics.py          metric aggregates over (y_true, y_pred)
   table_metrics.py    confusion_matrix / silhouette_score (buffering, table input)
+  composed_examples.py multi-function example queries, shared by Meta.examples + schema lists
   transforms.py       unsupervised fit_transform + ordinal/one_hot encoders (buffering)
   features.py         categorical (string) detection + auto one-hot Pipeline wrapping
   text.py             count/tfidf vectorizers over a text column (long-format output)
