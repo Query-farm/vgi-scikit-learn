@@ -577,12 +577,12 @@ this worker further restricts the trusted set to the `scikit-learn` / `numpy` /
 The worker isn't on PyPI; install it from a tagged GitHub release:
 
 ```sh
-uv tool install git+https://github.com/Query-farm/vgi-scikit-learn@v0.3.0
+uv tool install git+https://github.com/Query-farm/vgi-scikit-learn@v0.3.1
 ```
 
 This provides the `vgi-sklearn` (stdio, for DuckDB to spawn) and
 `vgi-sklearn-http` console scripts. Then `ATTACH 'sklearn' (TYPE vgi, LOCATION
-'vgi-sklearn')`, or skip the install with `LOCATION 'uvx --from git+https://github.com/Query-farm/vgi-scikit-learn@v0.3.0 vgi-sklearn'`. To attach a hosted HTTP deployment instead:
+'vgi-sklearn')`, or skip the install with `LOCATION 'uvx --from git+https://github.com/Query-farm/vgi-scikit-learn@v0.3.1 vgi-sklearn'`. To attach a hosted HTTP deployment instead:
 `ATTACH 'sklearn' (TYPE vgi, LOCATION 'https://<host>')`.
 
 ## Run via Docker

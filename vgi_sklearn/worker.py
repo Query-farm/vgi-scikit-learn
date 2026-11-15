@@ -226,11 +226,13 @@ _SCHEMA_META: dict[str, dict[str, str]] = {
         "title": "Metrics",
         "keywords": json.dumps(["metrics", "evaluation", "scoring", "regression", "classification"]),
         "doc_llm": (
-            "Model-evaluation metrics as aggregates over `(actual, predicted)` columns "
-            "(`r2_score`, `accuracy_score`, `f1_score`, `roc_auc_score`, clustering scores, "
-            "...) plus table functions for curves and matrices (`confusion_matrix`, "
-            "`roc_curve`, `precision_recall_curve`, `calibration_curve`, `silhouette_score`). "
-            "Score predictions from `sklearn.models.predict` or any other source."
+            "Model-evaluation metrics computed in SQL. Scores are aggregates over an "
+            "`(actual, predicted)` column pair, so they compose with GROUP BY to score each "
+            "segment separately; curves and matrices (confusion matrices, ROC, precision-recall "
+            "and calibration curves) are table functions that return one row per cell or point. "
+            "Covers regression error and fit, classification accuracy, precision/recall and "
+            "ranking quality, and clustering quality with or without ground-truth labels. Score "
+            "predictions from `sklearn.models.predict` or any other source."
         ),
         "doc_md": (
             "### Metrics\n\n"
@@ -269,11 +271,13 @@ _SCHEMA_META: dict[str, dict[str, str]] = {
         "doc_md": (
             "### Preprocessing\n\n"
             "Prepare and reshape features:\n\n"
-            "- **Scale / impute / encode** — scalers, `simple_imputer`, ordinal & one-hot encoders\n"
-            "- **Decompose / cluster / detect** — `pca`, `truncated_svd`, clustering, outlier detection\n"
-            "- **Text & selection** — `count_vectorizer`, `tfidf_vectorizer`, `select_k_best`, "
-            "`variance_threshold`\n"
-            "- **Stored** — `fit_transformer` → `BLOB`, replayed by `apply_transform`"
+            "- **Scale / impute / encode** — scalers, imputation, ordinal & one-hot encoders\n"
+            "- **Decompose / cluster / detect** — PCA and truncated SVD, clustering, outlier "
+            "detection, manifold embeddings\n"
+            "- **Text & selection** — token-count and TF-IDF vectorizers, univariate and "
+            "variance-based feature selection\n"
+            "- **Stored** — fit a transformer once into a `BLOB` and replay it on new rows, "
+            "mirroring the model registry"
         ),
         "example_queries": json.dumps(
             [
@@ -305,10 +309,12 @@ _SCHEMA_META: dict[str, dict[str, str]] = {
             "### Models\n\n"
             "Train, evaluate, and serve models — the default schema:\n\n"
             "- **fit → `BLOB` → predict**, features aligned by name, string labels auto-encoded\n"
-            "- **Validate** — `cross_val_predict`, `cross_val_score`, CV splitters\n"
-            "- **Inspect** — `partial_dependence`, `permutation_importance`\n"
-            "- **Search** — `grid_search`, `randomized_search`; **pipelines**; **per-group** modeling\n"
-            "- **Registry** — `list_models`, `model_info`, `drop_model`"
+            "- **Validate** — out-of-fold predictions, cross-validated scores, and CV splitters\n"
+            "- **Inspect** — partial dependence and permutation importance of a fitted model\n"
+            "- **Search** — cross-validated grid and randomized hyperparameter search; "
+            "**pipelines** chain transforms with an estimator; **per-group** modeling fits one "
+            "model per group\n"
+            "- **Registry** — models persisted by `model_name` can be listed, described, and dropped"
         ),
         "example_queries": json.dumps(
             [
