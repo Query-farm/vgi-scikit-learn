@@ -15,13 +15,14 @@
 VGI_PYTHON_SRC ?= $(HOME)/Development/vgi-python
 VGI_RPC_SRC    ?= $(HOME)/Development/vgi-rpc
 
-VGI_BUILD_DIR  ?= $(HOME)/Development/vgi/build/release
-TEST_RUNNER     = $(VGI_BUILD_DIR)/test/unittest
+# SQL tests run on the published haybarn-unittest with the community vgi extension
+# (ci/run-sqllogic.sh installs both; no local DuckDB/vgi builds).
+TEST_RUNNER     = ci/run-sqllogic.sh
 TEST_DIR        = .
 TEST_PATTERN    = test/sql/*
 
 # Worker paths (overridable)
-WORKER_STDIO   ?= uv run --python 3.13 sklearn_worker.py
+WORKER_STDIO   ?= uv run --python 3.14 sklearn_worker.py
 WORKER_HTTP    ?= http://localhost:8000
 WORKER_CLOUD   ?= https://$(FLY_APP).fly.dev
 HTTP_PORT      ?= 8000
@@ -36,7 +37,7 @@ TEST_MODELS_DIR ?= $(CURDIR)/.test-models
         test-docker-http test-cloud image smoke-test deploy venv
 
 venv:
-	uv venv --python 3.13
+	uv venv --python 3.14
 	uv pip install --python .venv \
 		"vgi-python[http,oauth] @ $(VGI_PYTHON_SRC)" \
 		"vgi-rpc[sentry] @ $(VGI_RPC_SRC)" \
@@ -52,7 +53,7 @@ test-stdio:
 	# WORKER_STDIO runs against the local vgi-python checkout (PEP 723 sources).
 	# Rebuild it in the script env first so uv doesn't reuse a stale cached build
 	# (same version, changed source) that predates a local edit.
-	uv run --reinstall-package vgi-python --python 3.13 sklearn_worker.py --help >/dev/null 2>&1 || true
+	uv run --reinstall-package vgi-python --python 3.14 sklearn_worker.py --help >/dev/null 2>&1 || true
 	SKLEARN_MODELS_DIR="$(TEST_MODELS_DIR)" VGI_SKLEARN_WORKER="$(WORKER_STDIO)" \
 		$(TEST_RUNNER) --test-dir "$(TEST_DIR)" "$(TEST_PATTERN)"
 

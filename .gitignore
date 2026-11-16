@@ -12,3 +12,5 @@ models/
 .coverage
 .test-models/
 dist/
+.tools/
+test/_sqllogic_stage/

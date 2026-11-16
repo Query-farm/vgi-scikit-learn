@@ -54,7 +54,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
       - name: Run unit tests
-        run: uv run --frozen --python 3.13 pytest tests/ -q
+        run: uv run --frozen --python 3.14 pytest tests/ -q
 
   integration:
     needs: resolve-haybarn
@@ -74,7 +74,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
 
       - name: Install the worker (from the lockfile)
-        run: uv sync --frozen --python 3.13
+        run: uv sync --frozen --python 3.14
 
       - name: Download haybarn-unittest
         run: |
@@ -137,11 +137,11 @@ jobs:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
       - name: Ruff lint
-        run: uv run --frozen --python 3.13 ruff check .
+        run: uv run --frozen --python 3.14 ruff check .
       - name: Ruff format check
-        run: uv run --frozen --python 3.13 ruff format --check .
+        run: uv run --frozen --python 3.14 ruff format --check .
       - name: Type check (mypy)
-        run: uv run --frozen --python 3.13 mypy vgi_sklearn/
+        run: uv run --frozen --python 3.14 mypy vgi_sklearn/
 
   # Lint the worker's catalog metadata (descriptions, tags, examples, column
   # docs) with vgi-lint-check. Metadata quality is platform-independent, so
@@ -160,7 +160,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
       - name: Install the worker (from the lockfile)
-        run: uv sync --frozen --python 3.13
+        run: uv sync --frozen --python 3.14
       - name: Lint worker metadata (static)
         uses: Query-farm/vgi-lint-check@v2
         with:
