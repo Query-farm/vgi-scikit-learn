@@ -6,9 +6,9 @@
 #
 #   ci/run-sqllogic.sh --test-dir . "test/sql/*"
 #
-# HAYBARN_VERSION (default 2.0.0rc11) picks the runner; it is installed into .tools/.
+# HAYBARN_VERSION (default 2.0.1rc3) picks the runner; it is installed into .tools/.
 set -euo pipefail
-HAYBARN_VERSION="${HAYBARN_VERSION:-2.0.0rc11}"
+HAYBARN_VERSION="${HAYBARN_VERSION:-2.0.1rc3}"
 TOOLS="${TOOLS:-.tools}"
 HAYBARN_UNITTEST="${HAYBARN_UNITTEST:-$TOOLS/bin/haybarn-unittest}"
 TEST_DIR=.
